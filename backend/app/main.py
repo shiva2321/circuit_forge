@@ -24,6 +24,11 @@ from backend.app.engine.ast_parser import VHDLParser
 from backend.app.agent.openrouter import openrouter_client, AVAILABLE_MODELS
 from backend.app.engine.toolchain import toolchain_mgr
 from backend.app.engine.project_manager import project_mgr
+from backend.app.engine.multiphysics import multiphysics_engine
+from backend.app.engine.forging import forging_engine
+from backend.app.engine.qa_testing import qa_testing_engine
+from backend.app.engine.firmware_security import firmware_security_engine
+from backend.app.engine.supply_chain import supply_chain_engine
 
 app = FastAPI(
     title="CircuitForge EDA & Knowledge Graph Server",
@@ -498,6 +503,111 @@ async def agent_intervention(req: AgentInterventionRequest):
             return res
         return {"error": "Missing net_name"}
     return {"error": f"Unknown action {action}"}
+
+
+# ==========================================
+# Turnkey Hardware Lifecycle REST Endpoints
+# ==========================================
+
+class MultiphysicsRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    clock_mhz: Optional[float] = 350.0
+    trace_length_mm: Optional[float] = 45.0
+    supply_voltage: Optional[float] = 1.0
+    load_current_a: Optional[float] = 3.5
+    ambient_temp_c: Optional[float] = 25.0
+    airflow_mps: Optional[float] = 1.5
+    board_thickness_mm: Optional[float] = 1.6
+    drop_height_m: Optional[float] = 1.5
+
+class DfmStackupRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    layer_count: Optional[int] = 8
+    substrate_family: Optional[str] = "Rogers_RO4350B"
+    trace_width_mil: Optional[float] = 3.5
+    trace_spacing_mil: Optional[float] = 3.5
+    min_via_drill_mil: Optional[float] = 6.0
+    use_nitrogen_purge: Optional[bool] = True
+
+class QaInspectionRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    bga_package: Optional[str] = "BGA256_0.5mm_Pitch"
+    ball_count: Optional[int] = 64
+    pitch_mm: Optional[float] = 0.5
+    total_nets: Optional[int] = 48
+    fundamental_clock_mhz: Optional[float] = 350.0
+
+class FirmwareSecurityRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    base_address_hex: Optional[str] = "0x40000000"
+    device_serial_id: Optional[str] = None
+    test_cycles: Optional[int] = 1000
+
+class SupplyChainRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Main_System"
+    target_volume: Optional[int] = 1000
+    action: Optional[str] = "bom"
+    original_mpn: Optional[str] = None
+    substitute_mpn: Optional[str] = None
+
+@app.post("/api/lifecycle/multiphysics")
+async def run_multiphysics_simulation_endpoint(req: MultiphysicsRequest):
+    return multiphysics_engine.run_multiphysics_co_simulation(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        clock_mhz=req.clock_mhz or 350.0,
+        trace_length_mm=req.trace_length_mm or 45.0,
+        supply_voltage=req.supply_voltage or 1.0,
+        load_current_a=req.load_current_a or 3.5,
+        ambient_temp_c=req.ambient_temp_c or 25.0,
+        airflow_mps=req.airflow_mps or 1.5,
+        board_thickness_mm=req.board_thickness_mm or 1.6,
+        drop_height_m=req.drop_height_m or 1.5
+    )
+
+@app.post("/api/lifecycle/dfm-stackup")
+async def run_dfm_stackup_endpoint(req: DfmStackupRequest):
+    return forging_engine.run_forging_manufacturability_audit(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        layer_count=req.layer_count or 8,
+        substrate_family=req.substrate_family or "Rogers_RO4350B",
+        trace_width_mil=req.trace_width_mil or 3.5,
+        trace_spacing_mil=req.trace_spacing_mil or 3.5,
+        min_via_drill_mil=req.min_via_drill_mil or 6.0,
+        use_nitrogen_purge=req.use_nitrogen_purge if req.use_nitrogen_purge is not None else True
+    )
+
+@app.post("/api/lifecycle/qa-inspection")
+async def run_qa_inspection_endpoint(req: QaInspectionRequest):
+    return qa_testing_engine.run_full_qa_certification(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        bga_package=req.bga_package or "BGA256_0.5mm_Pitch",
+        ball_count=req.ball_count or 64,
+        pitch_mm=req.pitch_mm or 0.5,
+        total_nets=req.total_nets or 48,
+        fundamental_clock_mhz=req.fundamental_clock_mhz or 350.0
+    )
+
+@app.post("/api/lifecycle/firmware-security")
+async def run_firmware_security_endpoint(req: FirmwareSecurityRequest):
+    return firmware_security_engine.run_firmware_and_security_suite(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        base_address_hex=req.base_address_hex or "0x40000000",
+        device_serial_id=req.device_serial_id,
+        test_cycles=req.test_cycles or 1000
+    )
+
+@app.post("/api/lifecycle/supply-chain")
+async def run_supply_chain_endpoint(req: SupplyChainRequest):
+    if req.action == "substitute" and req.original_mpn and req.substitute_mpn:
+        return supply_chain_engine.substitute_component(
+            original_mpn=req.original_mpn,
+            target_alternative_mpn=req.substitute_mpn
+        )
+    return supply_chain_engine.generate_project_bom(
+        circuit_name=req.circuit_name or "CircuitForge_Main_System",
+        target_volume=req.target_volume or 1000
+    )
+
 
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):

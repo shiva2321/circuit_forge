@@ -385,3 +385,86 @@ export async function renameProjectEntry(projectId: string, oldPath: string, new
   });
   return res.json();
 }
+
+// Turnkey Hardware Lifecycle APIs
+export async function runMultiphysicsSimulation(params: {
+  circuit_name?: string;
+  clock_mhz?: number;
+  trace_length_mm?: number;
+  supply_voltage?: number;
+  load_current_a?: number;
+  ambient_temp_c?: number;
+  airflow_mps?: number;
+  board_thickness_mm?: number;
+  drop_height_m?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/multiphysics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runDfmStackupAudit(params: {
+  circuit_name?: string;
+  layer_count?: number;
+  substrate_family?: string;
+  trace_width_mil?: number;
+  trace_spacing_mil?: number;
+  min_via_drill_mil?: number;
+  use_nitrogen_purge?: boolean;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/dfm-stackup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runQaInspection(params: {
+  circuit_name?: string;
+  bga_package?: string;
+  ball_count?: number;
+  pitch_mm?: number;
+  total_nets?: number;
+  fundamental_clock_mhz?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/qa-inspection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runFirmwareSecurity(params: {
+  circuit_name?: string;
+  base_address_hex?: string;
+  device_serial_id?: string;
+  test_cycles?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/firmware-security`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runSupplyChainLifecycle(params: {
+  circuit_name?: string;
+  target_volume?: number;
+  action?: string;
+  original_mpn?: string;
+  substitute_mpn?: string;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/supply-chain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+

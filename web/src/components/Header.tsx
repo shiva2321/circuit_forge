@@ -13,7 +13,8 @@ import {
   FileCode,
   RefreshCw,
   Grid3X3,
-  Bot
+  Bot,
+  Sparkles
 } from 'lucide-react';
 import { CatalogCircuit } from '../types/circuit';
 
@@ -21,8 +22,8 @@ export interface HeaderProps {
   circuits: CatalogCircuit[];
   selectedCircuit: string;
   onSelectCircuit: (id: string) => void;
-  activeTab: 'design' | 'waveform' | 'kg' | 'schematic' | 'code';
-  onSelectTab: (tab: 'design' | 'waveform' | 'kg') => void;
+  activeTab: 'design' | 'waveform' | 'kg' | 'schematic' | 'code' | 'lifecycle';
+  onSelectTab: (tab: 'design' | 'waveform' | 'kg' | 'lifecycle') => void;
   workspaceMode?: 'split' | 'schematic' | 'code';
   onChangeWorkspaceMode?: (mode: 'split' | 'schematic' | 'code') => void;
   layoutMode?: 'split' | 'tile' | 'float';
@@ -176,6 +177,19 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Network className="w-3.5 h-3.5" />
             <span>Knowledge Graph</span>
+          </button>
+
+          <button
+            onClick={() => onSelectTab('lifecycle')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
+              activeTab === 'lifecycle'
+                ? 'bg-gradient-to-r from-amber-600 to-rose-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`}
+            title="Turnkey Hardware Lifecycle Solution (Multiphysics, Forging DFM, QA Inspection, Firmware Security, Supply Chain)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>Turnkey Lifecycle</span>
           </button>
         </div>
 

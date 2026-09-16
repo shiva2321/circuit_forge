@@ -17,6 +17,11 @@ from backend.app.engine.toolchain import toolchain_mgr
 from backend.app.knowledge_graph.core import CircuitKnowledgeGraph
 from backend.app.knowledge_graph.hf_ingester import DatasetIngester
 from backend.app.knowledge_graph.updater import AutonomousGraphUpdater
+from backend.app.engine.multiphysics import multiphysics_engine
+from backend.app.engine.forging import forging_engine
+from backend.app.engine.qa_testing import qa_testing_engine
+from backend.app.engine.firmware_security import firmware_security_engine
+from backend.app.engine.supply_chain import supply_chain_engine
 
 
 def sanitize_vhdl_identifier(name: str) -> str:
@@ -1100,6 +1105,28 @@ end rtl;"""
             }
         }
 
+    # ── Turnkey Hardware Lifecycle Capabilities (5 Pillars) ────────────────────
+
+    def eda_multiphysics_simulation(self, circuit_name: str = "full_adder_gate_level", **kwargs) -> Dict[str, Any]:
+        """Simulates Signal Integrity (SI), Power Integrity (PI), 2D Thermal CFD, and Mechanical FEA."""
+        return multiphysics_engine.run_multiphysics_co_simulation(circuit_name, **kwargs)
+
+    def eda_dfm_stackup_audit(self, circuit_name: str = "full_adder_gate_level", **kwargs) -> Dict[str, Any]:
+        """Validates 2-to-32 layer stackup, impedance, sub-1-mil HDI rules, and SMT reflow profile."""
+        return forging_engine.run_forging_manufacturability_audit(circuit_name, **kwargs)
+
+    def eda_qa_virtual_inspection(self, circuit_name: str = "full_adder_gate_level", **kwargs) -> Dict[str, Any]:
+        """Simulates 3D X-Ray BGA voids, 3D AOI optical, Flying Probe ICT, and Pre-Compliance EMC spectrum."""
+        return qa_testing_engine.run_full_qa_certification(circuit_name, **kwargs)
+
+    def eda_generate_firmware_security(self, circuit_name: str = "full_adder_gate_level", **kwargs) -> Dict[str, Any]:
+        """Generates matching Bare-Metal C, Embedded Rust PAC, FreeRTOS tasks, and provisions Hardware Root of Trust."""
+        return firmware_security_engine.run_firmware_and_security_suite(circuit_name, **kwargs)
+
+    def eda_bom_supply_chain_sourcing(self, circuit_name: str = "full_adder_gate_level", target_volume: int = 1000, **kwargs) -> Dict[str, Any]:
+        """Extracts production BOM with live supplier stock, pricing, and 5-10 year EOL obsolescence warnings."""
+        return supply_chain_engine.generate_project_bom(circuit_name, target_volume=target_volume)
+
     # ── Universal Tool Calling Schemas & Execution Dispatcher ─────────────────
 
     @staticmethod
@@ -1277,6 +1304,88 @@ end rtl;"""
                         "required": ["query"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_multiphysics_simulation",
+                    "description": "Simulates 4 physics domains: Signal Integrity (Eye Diagram, Jitter), Power Integrity (DC IR Drop, PDN impedance), 2D Thermal CFD Heatmap, and Mechanical FEA Warping/Drop Stress.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit to simulate."},
+                            "clock_mhz": {"type": "number", "description": "High-speed clock frequency in MHz."},
+                            "substrate": {"type": "string", "description": "PCB substrate material (e.g. 'Rogers_RO4350B', 'FR4_Standard', 'Ceramic_Alumina')."},
+                            "ambient_temp_c": {"type": "number", "description": "Ambient environmental temperature in Celsius."},
+                            "has_heatsink": {"type": "boolean", "description": "Whether component is fitted with an active/passive heatsink."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_dfm_stackup_audit",
+                    "description": "Designs 2-to-32 layer stackup, computes microstrip/stripline trace impedance (Z0), and runs sub-1-mil HDI DFM rules & N2 reflow oven profiling.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit."},
+                            "layer_count": {"type": "integer", "description": "Number of PCB layers (2, 4, 6, 8, 12, 16, 24, 32)."},
+                            "substrate_family": {"type": "string", "description": "Dielectric material family (e.g. 'Rogers_RO4350B', 'FR4_High_Tg', 'Megtron_6')."},
+                            "trace_width_mil": {"type": "number", "description": "Minimum trace width in mils (supports sub-1-mil HDI down to 1.0 mil)."},
+                            "use_nitrogen_purge": {"type": "boolean", "description": "Use Nitrogen purge for pristine oxidation-free reflow joints."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_qa_virtual_inspection",
+                    "description": "Executes virtual non-destructive quality assurance: 3D X-Ray (AXI) BGA void inspection (IPC-A-610 Class 3), 3D AOI optical scanner, Flying Probe ICT coverage, and Pre-Compliance EMC spectrum (FCC Class B / CISPR 32).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit to inspect."},
+                            "bga_package": {"type": "string", "description": "BGA package designation (e.g. 'BGA256_0.5mm_Pitch')."},
+                            "has_shielding_can": {"type": "boolean", "description": "Whether RF / high-speed logic has metal shielding can."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_generate_firmware_security",
+                    "description": "Generates matching production Bare-Metal C drivers, memory-safe Embedded Rust Peripheral Access Crates, FreeRTOS task templates, and provisions Hardware Root of Trust (ECC / AES-256 / Silicon PUF keys).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit peripheral to bind."},
+                            "base_address": {"type": "string", "description": "Base memory address in hex (default: '0x40000000')."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_bom_supply_chain_sourcing",
+                    "description": "Extracts complete Bill of Materials (BOM), models real-time distributor inventory (DigiKey, Mouser, Arrow), unit volume pricing, and forecasts 5-to-10 year silicon obsolescence with drop-in substitutes.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit to source."},
+                            "target_volume": {"type": "integer", "description": "Target production run volume (e.g. 100, 1000, 10000)."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
             }
         ]
 
@@ -1384,6 +1493,38 @@ end rtl;"""
                     scale=args.get("scale")
                 )
                 res = {"success": True, "query": args.get("query"), "results_count": len(hits), "results": hits}
+            elif tool_name == "eda_multiphysics_simulation":
+                res = self.eda_multiphysics_simulation(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    clock_mhz=float(args.get("clock_mhz", 350.0)),
+                    substrate=args.get("substrate", "Rogers_RO4350B"),
+                    ambient_temp_c=float(args.get("ambient_temp_c", 25.0)),
+                    has_heatsink=bool(args.get("has_heatsink", True))
+                )
+            elif tool_name == "eda_dfm_stackup_audit":
+                res = self.eda_dfm_stackup_audit(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    layer_count=int(args.get("layer_count", 8)),
+                    substrate_family=args.get("substrate_family", "Rogers_RO4350B"),
+                    trace_width_mil=float(args.get("trace_width_mil", 3.5)),
+                    use_nitrogen_purge=bool(args.get("use_nitrogen_purge", True))
+                )
+            elif tool_name == "eda_qa_virtual_inspection":
+                res = self.eda_qa_virtual_inspection(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    bga_package=args.get("bga_package", "BGA256_0.5mm_Pitch"),
+                    has_shielding_can=bool(args.get("has_shielding_can", True))
+                )
+            elif tool_name == "eda_generate_firmware_security":
+                res = self.eda_generate_firmware_security(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    base_address=args.get("base_address", "0x40000000")
+                )
+            elif tool_name == "eda_bom_supply_chain_sourcing":
+                res = self.eda_bom_supply_chain_sourcing(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    target_volume=int(args.get("target_volume", 1000))
+                )
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
 

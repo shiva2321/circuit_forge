@@ -8,6 +8,7 @@ import { CodeEditor } from './components/CodeEditor';
 import { AgentDeck, AgentPhaseProgress } from './components/AgentDeck';
 import { ProjectManagerModal } from './components/ProjectManagerModal';
 import { StudioWindowManager, StudioLayoutMode } from './components/StudioWindowManager';
+import { TurnkeyLifecycleDeck } from './components/TurnkeyLifecycleDeck';
 import { CatalogCircuit, NetlistGraph, NetlistNode, NetlistWire, WaveformData, SimulationSummary, AgentLog } from './types/circuit';
 import { ComponentBlueprint } from './components/ComponentPalette';
 import {
@@ -31,9 +32,9 @@ export function App() {
   const [isProjectManagerOpen, setIsProjectManagerOpen] = useState<boolean>(() => {
     return localStorage.getItem('circuitforge_project_initialized') !== 'true';
   });
-  const [activeTab, setActiveTab] = useState<'design' | 'waveform' | 'kg' | 'schematic' | 'code'>(() => {
+  const [activeTab, setActiveTab] = useState<'design' | 'waveform' | 'kg' | 'schematic' | 'code' | 'lifecycle'>(() => {
     const saved = localStorage.getItem('circuitforge_active_tab');
-    if (saved === 'waveform' || saved === 'kg') return saved;
+    if (saved === 'waveform' || saved === 'kg' || saved === 'lifecycle') return saved;
     return 'design';
   });
   const [workspaceMode, setWorkspaceMode] = useState<'split' | 'schematic' | 'code'>(() => {
@@ -776,6 +777,10 @@ end rtl;`);
 
           {activeTab === 'kg' && (
             <KnowledgeGraphVisualizer lastUpdatedNodeId={lastUpdatedKGNodeId} />
+          )}
+
+          {activeTab === 'lifecycle' && (
+            <TurnkeyLifecycleDeck circuitName={selectedCircuit} projectId={activeProjectId} />
           )}
         </div>
 

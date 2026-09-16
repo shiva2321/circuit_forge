@@ -943,6 +943,90 @@ class OpenRouterClient:
                 )
                 return {"success": True, "model": "CircuitForge Knowledge Graph", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
+            # 11. Multiphysics Co-Simulation Intent (The Brain)
+            elif any(k in msg_lower for k in ("multiphysics", "signal integrity", "eye diagram", "thermal cfd", "power integrity", "ir drop", "fea")):
+                multi_res = tools_instance.execute_tool("eda_multiphysics_simulation", {"circuit_name": circuit_name})
+                tool_history.append({"tool": "eda_multiphysics_simulation", "result": multi_res})
+                si = multi_res.get("signal_integrity", {})
+                pi = multi_res.get("power_integrity", {})
+                th = multi_res.get("thermal_cfd", {})
+                fea = multi_res.get("mechanical_fea", {})
+                reply = (
+                    f"### 🌐 Multiphysics Co-Simulation Suite: `{circuit_name}`\n\n"
+                    f"- **Overall Certification**: `{multi_res.get('overall_status')}` (Score: **{multi_res.get('composite_physics_score')}/100**)\n"
+                    f"- **Signal Integrity (Eye Diagram)**: `{si.get('eye_width_ps')} ps` width, `{si.get('eye_height_v')} V` height (Jitter: `{si.get('total_jitter_ps')} ps`, BER: `{si.get('ber_estimate')}`)\n"
+                    f"- **Power Integrity (DC IR Drop)**: `{pi.get('dc_ir_drop_mv')} mV` ({pi.get('ir_drop_percent')}%), Target Impedance: `{pi.get('target_impedance_mohms')} mΩ`\n"
+                    f"- **Thermal CFD**: Peak Tj `{th.get('peak_junction_temp_c')}°C` (Margin to limit: `{th.get('thermal_margin_c')}°C`, Substrate: `{th.get('substrate_material')}`)\n"
+                    f"- **Mechanical FEA**: Warping `{fea.get('warping_displacement_um')} µm`, Solder shear stress `{fea.get('solder_shear_stress_mpa')} MPa` (Verdict: `{fea.get('verdict')}`)"
+                )
+                return {"success": True, "model": "CircuitForge Multiphysics Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 12. Forging & DFM Factory Intent (The Factory)
+            elif any(k in msg_lower for k in ("stackup", "layer stackup", "dfm", "hdi", "clearance rule", "reflow oven", "nitrogen purge")):
+                dfm_res = tools_instance.execute_tool("eda_dfm_stackup_audit", {"circuit_name": circuit_name})
+                tool_history.append({"tool": "eda_dfm_stackup_audit", "result": dfm_res})
+                stk = dfm_res.get("stackup", {})
+                dfm_rules = dfm_res.get("dfm_rules", {})
+                smt = dfm_res.get("smt_assembly", {})
+                reply = (
+                    f"### 🏭 High-Precision Forging & DFM Audit: `{circuit_name}`\n\n"
+                    f"- **Fabrication Status**: `{dfm_res.get('status')}` (DFM Yield Score: **{dfm_res.get('overall_forging_score')}%**)\n"
+                    f"- **Layer Stackup**: `{stk.get('layer_count')} Layers` ({stk.get('substrate_name')}), Target Z0: `50Ω` (Width: `{stk.get('calc_single_ended_width_mil')} mil`)\n"
+                    f"- **HDI Precision**: Tier `{dfm_rules.get('fabrication_tier')}`, Critical Violations: `{dfm_rules.get('total_violations')}`\n"
+                    f"- **SMT & Nitrogen Reflow**: Alloy `{smt.get('solder_paste_alloy')}`, Tombstone Risk: `{smt.get('tombstone_risk_percentage')}%`, Peak: `{smt.get('peak_reflow_temp_c')}°C`"
+                )
+                return {"success": True, "model": "CircuitForge Forging & DFM Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 13. Virtual QA & 3D Testing Intent (The Shield)
+            elif any(k in msg_lower for k in ("x-ray", "xray", "axi", "bga void", "aoi", "optical inspection", "emc", "emi", "halt", "hass", "flying probe", "ict")):
+                qa_res = tools_instance.execute_tool("eda_qa_virtual_inspection", {"circuit_name": circuit_name})
+                tool_history.append({"tool": "eda_qa_virtual_inspection", "result": qa_res})
+                xr = qa_res.get("xray_bga", {})
+                aoi = qa_res.get("optical_aoi", {})
+                ict = qa_res.get("flying_probe_ict", {})
+                emc = qa_res.get("emc_precompliance", {})
+                halt = qa_res.get("environmental_halt", {})
+                reply = (
+                    f"### 🛡️ Ultimate Quality Assurance & Certification: `{circuit_name}`\n\n"
+                    f"- **Shield Certification**: `{qa_res.get('certification_status')}`\n"
+                    f"- **3D X-Ray (AXI)**: `{xr.get('total_balls_inspected')} BGA balls`, Avg Void: `{xr.get('average_void_percentage')}%` ({xr.get('verdict')})\n"
+                    f"- **3D AOI Inspection**: `{aoi.get('total_components_inspected')} parts`, Optical Yield: `{aoi.get('optical_yield_percentage')}%`\n"
+                    f"- **Flying Probe / ICT**: `{ict.get('nodal_fault_coverage_percentage')}% nodal coverage` ({ict.get('accessible_testpoints')}/{ict.get('total_circuit_nets')} nets)\n"
+                    f"- **EMI/EMC Spectrum**: Margin `{emc.get('minimum_compliance_margin_db')} dB` vs FCC Part 15 Class B ({emc.get('verdict')})\n"
+                    f"- **HALT/HASS Environmental**: Projected MTBF `{halt.get('estimated_mtbf_hours')} hrs` ({halt.get('projected_operational_life_years')} yrs)"
+                )
+                return {"success": True, "model": "CircuitForge QA Shield Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 14. Firmware & Security Intent (The Soul)
+            elif any(k in msg_lower for k in ("firmware", "rust firmware", "c driver", "freertos", "root of trust", "puf", "secure boot", "tpm")):
+                fw_res = tools_instance.execute_tool("eda_generate_firmware_security", {"circuit_name": circuit_name})
+                tool_history.append({"tool": "eda_generate_firmware_security", "result": fw_res})
+                sec = fw_res.get("security", {})
+                hil = fw_res.get("hil", {})
+                reply = (
+                    f"### 🔐 Firmware Drivers & Hardware Root of Trust: `{circuit_name}`\n\n"
+                    f"- **Firmware Artifacts Generated**: Production C Header/HAL, Embedded Rust PAC, FreeRTOS Priority Task\n"
+                    f"- **Silicon PUF Fingerprint**: `{sec.get('silicon_puf_fingerprint', '')[:24]}...` (256-bit Hardware Root of Trust)\n"
+                    f"- **Device Cryptographic Identity**: `{sec.get('ecc_device_identity', {}).get('curve')}` Keypair fused in secure element\n"
+                    f"- **Secure Boot**: `{sec.get('secure_boot_manifest', {}).get('algorithm')}` Anti-Rollback v{sec.get('secure_boot_manifest', {}).get('anti_rollback_version')}\n"
+                    f"- **Hardware-in-the-Loop (HIL)**: `{hil.get('hil_test_cycles_executed')} CI cycles`, Pass Rate: `{hil.get('hil_pass_rate_percent')}%` ({hil.get('verdict')})"
+                )
+                return {"success": True, "model": "CircuitForge Firmware & Security Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 15. Supply Chain & BOM Intent (The Engine)
+            elif any(k in msg_lower for k in ("bom", "bill of materials", "sourcing", "digikey", "mouser", "obsolescence", "eol", "substitute")):
+                bom_res = tools_instance.execute_tool("eda_bom_supply_chain_sourcing", {"circuit_name": circuit_name})
+                tool_history.append({"tool": "eda_bom_supply_chain_sourcing", "result": bom_res})
+                reply = (
+                    f"### 📦 Global Supply Chain & BOM Lifecycle: `{circuit_name}`\n\n"
+                    f"- **Procurement Status**: `{bom_res.get('status')}` (Supply Health Score: **{bom_res.get('supply_chain_health_score')}/100**)\n"
+                    f"- **Unit BOM Cost**: `${bom_res.get('estimated_unit_bom_cost_usd')}` (Run Cost @ {bom_res.get('target_production_volume')} pcs: `${bom_res.get('total_production_run_cost_usd')}`)\n"
+                    f"- **Critical Path Lead Time**: `{bom_res.get('critical_path_lead_time_weeks')} weeks` across global distributors\n"
+                    f"- **Obsolescence Warnings**: `{bom_res.get('obsolescence_warnings_count')}` components flagged for 5-10 year EOL replacement\n"
+                    f"- **Distributors Integrated**: DigiKey, Mouser, Arrow Electronics"
+                )
+                return {"success": True, "model": "CircuitForge Supply Chain Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
         if "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
             reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench evaluates signal propagation, transition edges, and assertion vectors over 100ns."
             action = {"type": "simulate"}

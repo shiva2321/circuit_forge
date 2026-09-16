@@ -111,6 +111,17 @@ class AgentChatRequest(BaseModel):
     circuit_context: Optional[Dict[str, Any]] = None
     openrouter_key: Optional[str] = None
     model: Optional[str] = None
+    project_id: Optional[str] = None
+
+class ToolExecuteRequest(BaseModel):
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+    project_id: Optional[str] = None
+
+class CircuitBenchmarkRequest(BaseModel):
+    circuit_name: str = "full_adder_gate_level"
+    duration_ns: int = 100
+    vhdl_code: Optional[str] = None
 
 class ProjectCreateRequest(BaseModel):
     name: str
@@ -391,7 +402,9 @@ async def chat_with_agent(req: AgentChatRequest):
         message=req.message,
         circuit_context=req.circuit_context,
         api_key=key,
-        model=model
+        model=model,
+        tools_instance=tools,
+        project_id=req.project_id
     )
 
     # Broadcast agent response to WebSocket
@@ -403,7 +416,12 @@ async def chat_with_agent(req: AgentChatRequest):
             "state": "CO-PILOT",
             "action": "agent_reply",
             "thought": res.get("reply", ""),
-            "details": {"model": res.get("model"), "action": res.get("action"), "is_llm": res.get("is_llm")}
+            "details": {
+                "model": res.get("model"),
+                "action": res.get("action"),
+                "tool_history": res.get("tool_history", []),
+                "is_llm": res.get("is_llm")
+            }
         }
     })
 
@@ -419,6 +437,21 @@ async def chat_with_agent(req: AgentChatRequest):
         })
 
     return res
+
+@app.get("/api/agent/tools")
+def get_agent_tools():
+    """Returns the OpenAI/OpenRouter compatible tool schema definitions for autonomous execution."""
+    return {"tools": tools.get_tool_definitions()}
+
+@app.post("/api/agent/tools/execute")
+def execute_agent_tool(req: ToolExecuteRequest):
+    """Directly executes a tool by name within the sandboxed project environment."""
+    return tools.execute_tool(req.tool_name, req.arguments, default_project_id=req.project_id)
+
+@app.post("/api/agent/benchmark")
+def benchmark_circuit(req: CircuitBenchmarkRequest):
+    """Executes multi-dimensional architectural benchmarking on a circuit."""
+    return tools.eda_benchmark_circuit(req.circuit_name, req.duration_ns, req.vhdl_code)
 
 @app.post("/api/agent/intervention")
 async def agent_intervention(req: AgentInterventionRequest):

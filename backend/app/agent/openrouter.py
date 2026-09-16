@@ -9,6 +9,7 @@ import json
 import re
 import os
 from typing import Dict, Any, Optional, List
+from backend.app.core.bus import global_bus
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -529,8 +530,14 @@ class OpenRouterClient:
         circuit_context: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        tools_instance: Optional[Any] = None,
+        project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Interactive hardware engineering chat with the CircuitForge EDA Co-Pilot."""
+        """
+        Interactive hardware engineering chat with autonomous tool execution.
+        Empowers the model to inspect, read, write, edit, search files, lint, simulate,
+        and benchmark digital hardware end-to-end without human intervention.
+        """
         key = self.resolve_key(api_key)
         target_model = (model or self.default_model or "anthropic/claude-3.5-sonnet").strip()
         ctx = circuit_context or {}
@@ -540,22 +547,22 @@ class OpenRouterClient:
         wire_count = ctx.get("wire_count", 0)
         probes = ctx.get("probes", {})
         faults = ctx.get("faults", {})
+        proj_id = project_id or "scale1_full_adder"
 
-        # If API key is available, call the real OpenRouter LLM with full circuit context!
+        # ── 1. Autonomous Frontier Tool Calling Loop (If API Key Available) ───────
         if key and len(key) > 10:
             system_prompt = (
-                "You are CircuitForge Copilot: a world-class digital logic designer and hardware EDA assistant. "
-                "You are embedded directly inside an interactive VHDL schematic EDA studio with real-time cycle simulation, "
-                "fault injection, and topological netlist visualization.\n"
-                f"Active Circuit Context:\n"
-                f"- Design Name: {circuit_name}\n"
-                f"- Gate Count: {gate_count}, Wire Count: {wire_count}\n"
+                "You are CircuitForge Autonomous EDA Copilot: an expert digital logic architect with full access to "
+                "sandboxed filesystem tools and hardware simulation/benchmarking engines.\n\n"
+                "Capabilities:\n"
+                "- Filesystem: fs_list_files, fs_read_file, fs_write_file, fs_edit_file, fs_delete_file, fs_search_files\n"
+                "- Hardware EDA: eda_lint_code, eda_synthesize_netlist, eda_run_simulation, eda_benchmark_circuit, eda_query_knowledge_graph\n"
+                f"- Active Project: {proj_id}\n"
+                f"- Active Circuit: {circuit_name} ({gate_count} gates, {wire_count} nets)\n"
                 f"- Probes / Logic States: {json.dumps(probes)}\n"
-                f"- Injected Faults: {json.dumps(faults)}\n"
-                f"- Current VHDL Code Preview (first 1000 chars):\n{vhdl_code[:1000]}\n\n"
-                "Provide direct, concise, and technically rigorous explanations of logic propagation, timing paths, "
-                "or testbench coverage. If the user asks to design, modify, simulate, or inject a fault into the circuit, "
-                "give the technical explanation and include a clear recommendation."
+                f"- Injected Faults: {json.dumps(faults)}\n\n"
+                "Always proactively execute tools when the user requests to see, analyze, benchmark, modify, create, "
+                "or test hardware designs or files. Execute your tools in a self-healing loop until the task is complete."
             )
 
             headers = {
@@ -564,48 +571,165 @@ class OpenRouterClient:
                 "X-Title": "CircuitForge EDA Studio",
                 "Content-Type": "application/json"
             }
-            payload = {
-                "model": target_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1500,
-            }
+
+            messages: List[Dict[str, Any]] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ]
+
+            tools_schema = tools_instance.get_tool_definitions() if tools_instance else None
+            tool_history: List[Dict[str, Any]] = []
 
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    res = await client.post(OPENROUTER_API_URL, headers=headers, json=payload)
-                    if res.status_code == 200:
+                async with httpx.AsyncClient(timeout=45.0) as client:
+                    # Multi-turn autonomous tool execution loop (up to 6 turns)
+                    for turn in range(6):
+                        payload: Dict[str, Any] = {
+                            "model": target_model,
+                            "messages": messages,
+                            "temperature": 0.2,
+                            "max_tokens": 2000,
+                        }
+                        if tools_schema:
+                            payload["tools"] = tools_schema
+                            payload["tool_choice"] = "auto"
+
+                        res = await client.post(OPENROUTER_API_URL, headers=headers, json=payload)
+                        if res.status_code != 200:
+                            break
+
                         data = res.json()
                         choices = data.get("choices", [])
-                        if choices:
-                            msg_obj = choices[0].get("message", {})
+                        if not choices:
+                            break
+
+                        msg_obj = choices[0].get("message", {})
+                        tool_calls = msg_obj.get("tool_calls", [])
+
+                        # If model wants to execute tools:
+                        if tool_calls and tools_instance:
+                            # Append assistant message with tool calls
+                            messages.append(msg_obj)
+
+                            for tc in tool_calls:
+                                fn = tc.get("function", {})
+                                fn_name = fn.get("name", "")
+                                raw_args = fn.get("arguments", "{}")
+                                try:
+                                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                                except Exception:
+                                    args = {}
+
+                                # Notify studio via WebSocket
+                                await global_bus.broadcast({
+                                    "type": "agent_thought",
+                                    "data": {
+                                        "time": int(time.time() * 1000),
+                                        "state": "TOOL_EXEC",
+                                        "action": fn_name,
+                                        "thought": f"Autonomous Tool Execution: {fn_name}({json.dumps(args)[:80]})",
+                                        "details": {"tool": fn_name, "arguments": args, "turn": turn + 1}
+                                    }
+                                })
+
+                                # Execute tool safely in sandbox
+                                result = tools_instance.execute_tool(fn_name, args, default_project_id=proj_id)
+                                tool_history.append({
+                                    "turn": turn + 1,
+                                    "tool": fn_name,
+                                    "arguments": args,
+                                    "result": result
+                                })
+
+                                # Broadcast tool result
+                                await global_bus.broadcast({
+                                    "type": "agent_thought",
+                                    "data": {
+                                        "time": int(time.time() * 1000),
+                                        "state": "TOOL_RESULT",
+                                        "action": f"{fn_name}_done",
+                                        "thought": f"Tool Result [{fn_name}]: Success={result.get('success', False)}",
+                                        "details": result
+                                    }
+                                })
+
+                                # Append observation message
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", f"call_{turn}_{fn_name}"),
+                                    "content": json.dumps(result)
+                                })
+
+                            # Continue loop so model can observe tool results and complete answer
+                            continue
+                        else:
+                            # Final text response reached
                             content = msg_obj.get("content") or msg_obj.get("reasoning") or ""
-                            # Check if user requested an automated action
                             action = None
                             lower_msg = message.lower()
                             if "design" in lower_msg or "synthesize" in lower_msg or "create" in lower_msg or "build" in lower_msg:
                                 action = {"type": "design", "goal": message}
                             elif "simulate" in lower_msg or "run simulation" in lower_msg:
                                 action = {"type": "simulate"}
+
                             return {
                                 "success": True,
                                 "model": target_model,
                                 "reply": str(content).strip(),
                                 "action": action,
+                                "tool_history": tool_history,
                                 "is_llm": True
                             }
-            except Exception:
+
+            except Exception as loop_err:
+                # Log error and fall through to expert rule fallback
                 pass
 
-        # Offline / Heuristic EDA Assistant when key not provided or request fails
+        # ── 2. Offline / Deterministic Tool-Assisted Expert Fallback ──────────────
         msg_lower = message.lower()
         action = None
+        tool_history = []
+
+        # Proactively execute tools on deterministic user intents even without API key!
+        if tools_instance:
+            if "benchmark" in msg_lower:
+                bench_res = tools_instance.execute_tool("eda_benchmark_circuit", {"circuit_name": circuit_name, "duration_ns": 100})
+                tool_history.append({"tool": "eda_benchmark_circuit", "result": bench_res})
+                b = bench_res.get("benchmark_results", {})
+                reply = (
+                    f"### ⚡ Hardware Benchmark Results: `{circuit_name}`\n\n"
+                    f"- **Verdict**: `{b.get('verdict', 'VERIFIED')}` (Score: **{b.get('architectural_score')}/100**)\n"
+                    f"- **Gate Count**: `{b.get('gate_count')}` nodes, `{b.get('wire_count')}` routed wires\n"
+                    f"- **Primary I/O**: `{b.get('primary_inputs')}` inputs, `{b.get('primary_outputs')}` outputs\n"
+                    f"- **Max Clock Frequency**: `{b.get('max_clock_frequency_mhz')} MHz` (Crit path: `{b.get('est_critical_path_delay_ns')} ns`)\n"
+                    f"- **Simulation Throughput**: `{b.get('simulation_throughput_m_evals_sec')} M-evals/sec` ({b.get('simulated_cycles')} cycles in `{b.get('simulation_wall_time_sec')}s`)\n"
+                    f"- **Verification Assertions**: `{b.get('assertions_passed')}/{b.get('assertions_total')}` passed ({b.get('assertion_coverage_percent')}% coverage)\n"
+                    f"- **Estimated Dynamic Power**: `{b.get('est_dynamic_power_uw')} µW`"
+                )
+                return {"success": True, "model": "CircuitForge Expert Benchmarking Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            elif "list files" in msg_lower or "show files" in msg_lower or "ls" in msg_lower:
+                files_res = tools_instance.execute_tool("fs_list_files", {"project_id": proj_id})
+                tool_history.append({"tool": "fs_list_files", "result": files_res})
+                flist = files_res.get("files", [])
+                lines = [f"- `{f['path']}` ({f['lines']} lines, {f['size_bytes']} bytes)" for f in flist]
+                reply = f"### 📁 Workspace Files for Project `{proj_id}`:\n" + ("\n".join(lines) if lines else "No files found.")
+                return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            elif "lint" in msg_lower or "drc" in msg_lower:
+                lint_res = tools_instance.execute_tool("eda_lint_code", {"vhdl_code": vhdl_code})
+                tool_history.append({"tool": "eda_lint_code", "result": lint_res})
+                reply = (
+                    f"### 🛡️ Static DRC & Syntax Lint Report:\n"
+                    f"- **Syntax Valid**: `{'✓ PASSED' if lint_res.get('is_valid') else '✗ ERRORS FOUND'}`\n"
+                    f"- **Entities Found**: `{len(lint_res.get('entities', []))}`\n"
+                    f"- **Signals**: `{lint_res.get('signals_count')}`, **Processes**: `{lint_res.get('processes_count')}`\n"
+                    f"- **Issues**: {len(lint_res.get('messages', []))} warnings/errors."
+                )
+                return {"success": True, "model": "CircuitForge DRC Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
         if "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
-            reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench will evaluate signal propagation, transition edges, and assertion vectors over 100ns."
+            reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench evaluates signal propagation, transition edges, and assertion vectors over 100ns."
             action = {"type": "simulate"}
         elif "fault" in msg_lower or "stuck" in msg_lower:
             reply = (
@@ -619,10 +743,8 @@ class OpenRouterClient:
                 "when a signal is assigned inside an `if` or `case` statement without covering all possible conditions (i.e. missing `else` or `when others`). "
                 "Ensure every output signal is assigned a default value at the top of the process body."
             )
-        elif "design" in msg_lower or "synthesize" in msg_lower or "create" in msg_lower:
-            reply = (
-                f"I can autonomously design and synthesize that! Launching autonomous RTL pipeline for: *{message}*."
-            )
+        elif "design" in msg_lower or "synthesize" in msg_lower or "create" in msg_lower or "build" in msg_lower:
+            reply = f"I can autonomously design and synthesize that! Launching autonomous RTL pipeline for: *{message}*."
             action = {"type": "design", "goal": message}
         elif "mux" in msg_lower or "multiplexer" in msg_lower:
             reply = (
@@ -637,8 +759,9 @@ class OpenRouterClient:
             )
         else:
             reply = (
-                f"CircuitForge Co-Pilot ready. Analyzing **{circuit_name}** ({gate_count} gates, {wire_count} routed nets). "
-                "You can ask me to explain logic paths, calculate truth tables, inspect inferred latches, inject stuck-at faults, or autonomously synthesize any custom circuit by entering a goal."
+                f"CircuitForge Autonomous Co-Pilot ready. Analyzing **{circuit_name}** ({gate_count} gates, {wire_count} routed nets). "
+                "I have direct access to your sandboxed project filesystem, live cycle simulation, and multi-dimensional benchmarking tools. "
+                "Ask me to benchmark this circuit, list/read project files, test syntax, or build a new hardware architecture!"
             )
 
         return {
@@ -646,7 +769,9 @@ class OpenRouterClient:
             "model": "CircuitForge Expert EDA Engine",
             "reply": reply,
             "action": action,
+            "tool_history": tool_history,
             "is_llm": False
         }
+
 
 openrouter_client = OpenRouterClient()

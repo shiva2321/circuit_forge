@@ -251,7 +251,8 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         userMsg,
         circuitContext,
         openrouterKey,
-        selectedModel
+        selectedModel,
+        activeProjectId
       );
 
       // If the LLM response contains an automated studio action:
@@ -325,11 +326,12 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
   ];
 
   const quickPromptChips = [
+    '⚡ Benchmark Circuit Architecture',
+    '📁 List Project Workspace Files',
+    '🛡️ Static DRC & Syntax Lint',
     'Add asynchronous active-low reset',
     'Optimize critical path timing',
-    'Inject stuck-at-0 fault on Sum',
     'Run 200ns cycle simulation',
-    'Verify zero unclocked latches',
   ];
 
   // NaN-safe phase index calculation
@@ -758,9 +760,33 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                   <div className="w-6 h-6 rounded-md bg-purple-950 border border-purple-800 flex items-center justify-center text-purple-400 flex-shrink-0 mt-0.5">
                     <Bot className="w-3.5 h-3.5" />
                   </div>
-                  <div className="max-w-[88%] bg-slate-900/90 border border-slate-800 rounded-2xl rounded-tl-sm p-2.5 text-xs text-slate-200 shadow-sm">
+                  <div
+                    className={`max-w-[88%] rounded-2xl p-2.5 text-xs shadow-sm border ${
+                      log.state === 'TOOL_EXEC'
+                        ? 'bg-cyan-950/40 border-cyan-700/60 text-cyan-100 rounded-tl-sm'
+                        : log.state === 'TOOL_RESULT'
+                        ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-100 rounded-tl-sm'
+                        : 'bg-slate-900/90 border-slate-800 text-slate-200 rounded-tl-sm'
+                    }`}
+                  >
                     <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
-                      <span className="font-semibold text-purple-300 font-mono">{log.state}</span>
+                      <div className="flex items-center space-x-1.5">
+                        <span
+                          className={`font-semibold font-mono ${
+                            log.state === 'TOOL_EXEC'
+                              ? 'text-cyan-300'
+                              : log.state === 'TOOL_RESULT'
+                              ? 'text-emerald-300'
+                              : 'text-purple-300'
+                          }`}
+                        >
+                          {log.state === 'TOOL_EXEC'
+                            ? '⚙️ TOOL CALL'
+                            : log.state === 'TOOL_RESULT'
+                            ? '✓ TOOL RESULT'
+                            : log.state}
+                        </span>
+                      </div>
                       <div className="flex items-center space-x-1">
                         {log.details?.model && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-mono">
@@ -768,17 +794,17 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                           </span>
                         )}
                         {log.action && (
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-950 text-slate-400">
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800 font-mono font-bold">
                             {log.action}
                           </span>
                         )}
                       </div>
                     </div>
-                    <p className="font-sans text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">
+                    <p className="font-sans text-[11px] leading-relaxed whitespace-pre-wrap">
                       {log.thought}
                     </p>
                     {log.details && Object.keys(log.details).length > 0 && !log.details.model && (
-                      <div className="mt-2 p-1.5 bg-slate-950 rounded border border-slate-800 text-[10px] text-slate-400 overflow-x-auto">
+                      <div className="mt-2 p-1.5 bg-slate-950 rounded border border-slate-800/80 text-[10px] text-slate-400 overflow-x-auto max-h-40">
                         <pre>{JSON.stringify(log.details, null, 2)}</pre>
                       </div>
                     )}

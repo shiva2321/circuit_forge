@@ -394,6 +394,19 @@ class CircuitAgent:
                 action="simulation_complete",
                 details=assertions
             )
+
+            # Architectural Benchmarking Assessment
+            try:
+                bench = self.tools.eda_benchmark_circuit(circuit_name, duration_ns=100, vhdl_code=design_res.get("vhdl_code"))
+                b_res = bench.get("benchmark_results", {})
+                self.log_thought(
+                    f"Architectural Benchmark ({b_res.get('verdict', 'VERIFIED')}): Score {b_res.get('architectural_score')}/100. Fmax={b_res.get('max_clock_frequency_mhz')}MHz, Throughput={b_res.get('simulation_throughput_m_evals_sec')}M-evals/s.",
+                    action="benchmark_complete",
+                    details=b_res
+                )
+            except Exception:
+                pass
+
             await asyncio.sleep(0.5)
             await self._check_pause_and_step()
 

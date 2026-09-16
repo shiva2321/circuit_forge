@@ -164,12 +164,14 @@ export async function chatWithAgent(
     faults?: Record<string, string>;
   },
   openrouterKey?: string,
-  model?: string
+  model?: string,
+  projectId?: string
 ): Promise<{
   success: boolean;
   model: string;
   reply: string;
   action?: { type: string; goal?: string };
+  tool_history?: Array<{ tool: string; arguments?: any; result?: any }>;
   is_llm?: boolean;
 }> {
   const res = await fetch(`${API_BASE}/agent/chat`, {
@@ -180,7 +182,43 @@ export async function chatWithAgent(
       circuit_context: circuitContext,
       openrouter_key: openrouterKey,
       model,
+      project_id: projectId,
     }),
+  });
+  return res.json();
+}
+
+export async function getAgentTools(): Promise<{ tools: any[] }> {
+  const res = await fetch(`${API_BASE}/agent/tools`);
+  return res.json();
+}
+
+export async function executeAgentTool(
+  toolName: string,
+  args: Record<string, any> = {},
+  projectId?: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/agent/tools/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_name: toolName, arguments: args, project_id: projectId }),
+  });
+  return res.json();
+}
+
+export async function benchmarkCircuit(
+  circuitName: string,
+  durationNs: number = 100,
+  vhdlCode?: string
+): Promise<{
+  success: boolean;
+  circuit_name: string;
+  benchmark_results: any;
+}> {
+  const res = await fetch(`${API_BASE}/agent/benchmark`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ circuit_name: circuitName, duration_ns: durationNs, vhdl_code: vhdlCode }),
   });
   return res.json();
 }

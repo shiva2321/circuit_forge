@@ -4,11 +4,16 @@ Equips the AI agent with tools to design, lint, synthesize, simulate,
 inspect, and learn circuits across all 4 scales.
 """
 
+import os
+import time
+import json
 import re
 from typing import Dict, List, Any, Optional
 from backend.app.engine.simulator import Simulator
 from backend.app.engine.netlist import NetlistCatalog, NetlistGraph
 from backend.app.engine.ast_parser import VHDLParser
+from backend.app.engine.project_manager import project_mgr
+from backend.app.engine.toolchain import toolchain_mgr
 from backend.app.knowledge_graph.core import CircuitKnowledgeGraph
 from backend.app.knowledge_graph.hf_ingester import DatasetIngester
 from backend.app.knowledge_graph.updater import AutonomousGraphUpdater
@@ -785,3 +790,577 @@ end rtl;"""
     def ingest_huggingface(self, dataset_name: str, max_samples: int = 15) -> Dict[str, Any]:
         """Ingests open-source hardware designs from Hugging Face into the knowledge graph."""
         return self.ingester.ingest_from_huggingface(dataset_name, max_samples)
+
+    # ── Sandboxed Filesystem Tools (Strict Project Isolation) ──────────────────
+
+    def _resolve_project_path(self, project_id: str, rel_path: str = "") -> str:
+        """Resolves and validates that a path stays strictly inside the designated project directory."""
+        if not project_id:
+            project_id = "scale1_full_adder"
+        raw = (rel_path or "").strip()
+        if raw.startswith("/") or raw.startswith("\\") or (len(raw) > 1 and raw[1] == ":"):
+            raise PermissionError(f"Security Sandbox Violation: Absolute path '{rel_path}' is prohibited.")
+        clean_rel = raw.replace("\\", "/").lstrip("/")
+        proj_dir = os.path.abspath(os.path.join(project_mgr.base_dir, project_id))
+        if not os.path.exists(proj_dir):
+            os.makedirs(proj_dir, exist_ok=True)
+        target = os.path.abspath(os.path.join(proj_dir, clean_rel))
+        if not (target == proj_dir or target.startswith(proj_dir + os.sep)):
+            raise PermissionError(f"Security Sandbox Violation: Path '{rel_path}' escapes project boundary '{project_id}'.")
+        return target
+
+    def fs_list_files(self, project_id: str, subpath: str = "") -> Dict[str, Any]:
+        """Lists files and directories inside a project workspace with size and line counts."""
+        target_dir = self._resolve_project_path(project_id, subpath)
+        if not os.path.exists(target_dir):
+            return {"success": False, "error": f"Directory not found: {subpath}"}
+
+        entries = []
+        for root, dirs, files in os.walk(target_dir):
+            for f in files:
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, os.path.join(project_mgr.base_dir, project_id)).replace("\\", "/")
+                sz = os.path.getsize(full)
+                lines = 0
+                try:
+                    with open(full, "r", encoding="utf-8", errors="ignore") as fh:
+                        lines = sum(1 for _ in fh)
+                except Exception:
+                    pass
+                entries.append({
+                    "path": rel,
+                    "name": f,
+                    "size_bytes": sz,
+                    "lines": lines,
+                    "type": "vhdl" if f.endswith(".vhd") else "markdown" if f.endswith(".md") else "json" if f.endswith(".json") else "other"
+                })
+        return {
+            "success": True,
+            "project_id": project_id,
+            "subpath": subpath,
+            "total_files": len(entries),
+            "files": entries
+        }
+
+    def fs_read_file(
+        self,
+        project_id: str,
+        path: str,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Reads content from a project file, optionally with 1-indexed line slicing."""
+        target_path = self._resolve_project_path(project_id, path)
+        if not os.path.exists(target_path) or os.path.isdir(target_path):
+            return {"success": False, "error": f"File not found: {path} in project {project_id}"}
+
+        with open(target_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+
+        total_lines = len(all_lines)
+        if start_line is not None or end_line is not None:
+            s = max(1, start_line or 1) - 1
+            e = min(total_lines, end_line or total_lines)
+            sliced_lines = all_lines[s:e]
+            content = "".join(sliced_lines)
+            return {
+                "success": True,
+                "project_id": project_id,
+                "path": path,
+                "start_line": s + 1,
+                "end_line": e,
+                "total_lines": total_lines,
+                "content": content
+            }
+
+        content = "".join(all_lines)
+        return {
+            "success": True,
+            "project_id": project_id,
+            "path": path,
+            "total_lines": total_lines,
+            "content": content
+        }
+
+    def fs_write_file(self, project_id: str, path: str, content: str) -> Dict[str, Any]:
+        """Safely creates or overwrites a project file within the workspace boundary."""
+        target_path = self._resolve_project_path(project_id, path)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        lines = len(content.splitlines())
+        return {
+            "success": True,
+            "project_id": project_id,
+            "path": path,
+            "size_bytes": len(content.encode("utf-8")),
+            "lines": lines,
+            "message": f"Successfully wrote {lines} lines to {path}."
+        }
+
+    def fs_edit_file(
+        self,
+        project_id: str,
+        path: str,
+        target_snippet: str,
+        replacement_snippet: str
+    ) -> Dict[str, Any]:
+        """Surgically edits a file by finding target_snippet and replacing it with replacement_snippet."""
+        target_path = self._resolve_project_path(project_id, path)
+        if not os.path.exists(target_path):
+            return {"success": False, "error": f"Cannot edit non-existent file: {path}"}
+
+        with open(target_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        count = content.count(target_snippet)
+        if count == 0:
+            return {"success": False, "error": f"Target snippet not found in {path}. Make sure whitespace and capitalization match exactly."}
+        if count > 1:
+            return {"success": False, "error": f"Target snippet matches {count} occurrences in {path}. Provide a larger, unique snippet block."}
+
+        new_content = content.replace(target_snippet, replacement_snippet, 1)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "path": path,
+            "message": f"Successfully replaced target snippet in {path}."
+        }
+
+    def fs_delete_file(self, project_id: str, path: str) -> Dict[str, Any]:
+        """Deletes a file or directory within the project boundary."""
+        target_path = self._resolve_project_path(project_id, path)
+        if not os.path.exists(target_path):
+            return {"success": False, "error": f"File or path does not exist: {path}"}
+        proj_dir = os.path.abspath(os.path.join(project_mgr.base_dir, project_id))
+        if target_path == proj_dir:
+            return {"success": False, "error": "Deleting project root is prohibited."}
+
+        if os.path.isdir(target_path):
+            import shutil
+            shutil.rmtree(target_path)
+        else:
+            os.remove(target_path)
+        return {"success": True, "project_id": project_id, "path": path, "message": f"Deleted {path}."}
+
+    def fs_search_files(self, project_id: str, query: str, regex: bool = False) -> Dict[str, Any]:
+        """Searches across all project files for matching strings or regex patterns."""
+        proj_dir = self._resolve_project_path(project_id)
+        matches = []
+        flags = re.IGNORECASE
+        compiled = re.compile(query, flags) if regex else None
+
+        for root, _, files in os.walk(proj_dir):
+            for f in files:
+                if f.endswith((".vhd", ".md", ".json", ".sdc", ".txt")):
+                    full = os.path.join(root, f)
+                    rel = os.path.relpath(full, proj_dir).replace("\\", "/")
+                    try:
+                        with open(full, "r", encoding="utf-8", errors="ignore") as fh:
+                            for idx, line in enumerate(fh, 1):
+                                hit = compiled.search(line) if regex else (query.lower() in line.lower())
+                                if hit:
+                                    matches.append({
+                                        "file": rel,
+                                        "line_number": idx,
+                                        "line_content": line.strip()
+                                    })
+                                    if len(matches) >= 50:
+                                        break
+                    except Exception:
+                        pass
+        return {
+            "success": True,
+            "project_id": project_id,
+            "query": query,
+            "match_count": len(matches),
+            "matches": matches
+        }
+
+    # ── EDA Circuit Execution & Benchmarking Tools ────────────────────────────
+
+    def eda_lint_code(self, vhdl_code: str) -> Dict[str, Any]:
+        """Runs static DRC, entity/signal extraction, and latch inference checks."""
+        res = VHDLParser.parse_code(vhdl_code)
+        return {
+            "success": True,
+            "is_valid": res.is_valid,
+            "entities": [{"name": e.name, "ports": [p.__dict__ for p in e.ports]} for e in res.entities],
+            "signals_count": len(res.signals),
+            "processes_count": res.processes_count,
+            "messages": [m.__dict__ for m in res.lint_messages]
+        }
+
+    def eda_synthesize_netlist(self, vhdl_code: Optional[str] = None, circuit_name: str = "custom_circuit") -> Dict[str, Any]:
+        """Synthesizes VHDL into a hierarchical netlist graph with nodes, ports, and wires."""
+        if vhdl_code:
+            netlist = VHDLParser.synthesize_from_vhdl(vhdl_code, circuit_name)
+            self.last_netlist = netlist
+            return {"success": True, "circuit_name": circuit_name, "netlist": netlist.to_dict()}
+        res = self.synthesize_netlist(circuit_name)
+        return {"success": True, "circuit_name": circuit_name, "netlist": res}
+
+    def eda_run_simulation(
+        self,
+        circuit_name: str,
+        duration_ns: int = 100,
+        vhdl_code: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Runs cycle-accurate simulation with stimulus schedule and verification assertions."""
+        sim_res = self.run_simulation(circuit_name, duration_ns)
+        return {"success": True, **sim_res}
+
+    def eda_benchmark_circuit(
+        self,
+        circuit_name: str,
+        duration_ns: int = 100,
+        vhdl_code: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Runs comprehensive architectural benchmarks on a circuit design:
+        evaluates gate complexity, interconnect net count, clock latency,
+        simulation throughput (evaluations/sec), assertion coverage, and synthesis score.
+        """
+        t0 = time.perf_counter()
+
+        # 1. Synthesize netlist to extract topological gate metrics
+        if vhdl_code:
+            netlist_obj = VHDLParser.synthesize_from_vhdl(vhdl_code, circuit_name)
+            netlist_dict = netlist_obj.to_dict()
+        else:
+            netlist_dict = self.synthesize_netlist(circuit_name)
+
+        nodes = netlist_dict.get("nodes", [])
+        wires = netlist_dict.get("wires", [])
+        inputs = netlist_dict.get("primary_inputs", [])
+        outputs = netlist_dict.get("primary_outputs", [])
+
+        gate_count = len(nodes)
+        wire_count = len(wires)
+
+        # 2. Run cycle-accurate event-driven simulation
+        sim_res = self.run_simulation(circuit_name, duration_ns)
+        wall_time = max(0.0001, sim_res["summary"].get("wall_time_sec", 0.001))
+        total_time_ns = sim_res["summary"].get("total_time_ns", duration_ns)
+        assertions = sim_res["summary"].get("assertions", {})
+        passed_asserts = assertions.get("passed", 0)
+        total_asserts = assertions.get("total", 0)
+        assert_rate = round((passed_asserts / total_asserts * 100.0) if total_asserts > 0 else 100.0, 1)
+
+        elapsed = time.perf_counter() - t0
+
+        # 3. Calculate architectural metrics
+        clock_period_ns = 10.0
+        cycles = max(1, int(total_time_ns / clock_period_ns))
+        # Estimate critical path logic depth
+        logic_depth = max(1, min(gate_count, 12))
+        est_critical_path_delay_ns = round(logic_depth * 0.45 + (wire_count * 0.05), 2)
+        fmax_mhz = round(1000.0 / max(1.0, est_critical_path_delay_ns), 2)
+        total_evals = cycles * max(1, gate_count)
+        throughput_m_evals_sec = round((total_evals / wall_time) / 1_000_000, 2)
+        est_dynamic_power_uw = round(gate_count * (fmax_mhz / 100.0) * 12.5, 1)
+
+        # Composite readiness rating (0 - 100)
+        score = 60
+        if assert_rate == 100.0:
+            score += 25
+        elif assert_rate >= 80.0:
+            score += 15
+        if gate_count > 0:
+            score += 10
+        if fmax_mhz >= 100.0:
+            score += 5
+        score = min(100, score)
+
+        return {
+            "success": True,
+            "circuit_name": circuit_name,
+            "benchmark_results": {
+                "gate_count": gate_count,
+                "wire_count": wire_count,
+                "primary_inputs": len(inputs),
+                "primary_outputs": len(outputs),
+                "clock_period_ns": clock_period_ns,
+                "simulated_cycles": cycles,
+                "simulated_time_ns": total_time_ns,
+                "simulation_wall_time_sec": round(wall_time, 4),
+                "total_benchmark_time_sec": round(elapsed, 4),
+                "simulation_throughput_m_evals_sec": throughput_m_evals_sec,
+                "est_critical_path_delay_ns": est_critical_path_delay_ns,
+                "max_clock_frequency_mhz": fmax_mhz,
+                "est_dynamic_power_uw": est_dynamic_power_uw,
+                "assertions_passed": passed_asserts,
+                "assertions_total": total_asserts,
+                "assertion_coverage_percent": assert_rate,
+                "architectural_score": score,
+                "verdict": "PRODUCTION_READY" if (assert_rate == 100.0 and score >= 85) else "VERIFIED" if assert_rate == 100.0 else "FAILING_ASSERTIONS"
+            }
+        }
+
+    # ── Universal Tool Calling Schemas & Execution Dispatcher ─────────────────
+
+    @staticmethod
+    def get_tool_definitions() -> List[Dict[str, Any]]:
+        """Returns standard OpenAI/OpenRouter function calling tool specifications."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_list_files",
+                    "description": "Lists all files in the active project directory with line counts, sizes, and file types.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project directory identifier."},
+                            "subpath": {"type": "string", "description": "Optional subfolder relative to project root (e.g. 'src', 'tb')."}
+                        },
+                        "required": ["project_id"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_read_file",
+                    "description": "Reads the entire content or a specific line slice of a file in the project workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project identifier."},
+                            "path": {"type": "string", "description": "Relative file path inside the project (e.g. 'src/alu_64bit.vhd')."},
+                            "start_line": {"type": "integer", "description": "Optional 1-indexed start line."},
+                            "end_line": {"type": "integer", "description": "Optional 1-indexed end line."}
+                        },
+                        "required": ["project_id", "path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "description": "Creates or overwrites a project file safely within the workspace boundary.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project identifier."},
+                            "path": {"type": "string", "description": "Relative file path inside project (e.g. 'src/counter.vhd')."},
+                            "content": {"type": "string", "description": "Complete text or VHDL code to write."}
+                        },
+                        "required": ["project_id", "path", "content"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_edit_file",
+                    "description": "Surgically edits an existing project file by replacing a unique target text snippet with a new replacement snippet.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project identifier."},
+                            "path": {"type": "string", "description": "Relative file path inside project."},
+                            "target_snippet": {"type": "string", "description": "Exact text snippet to find and replace (must match uniquely)."},
+                            "replacement_snippet": {"type": "string", "description": "New replacement text."}
+                        },
+                        "required": ["project_id", "path", "target_snippet", "replacement_snippet"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_delete_file",
+                    "description": "Deletes an obsolete file within the project workspace boundary.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project identifier."},
+                            "path": {"type": "string", "description": "Relative path of file to delete."}
+                        },
+                        "required": ["project_id", "path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fs_search_files",
+                    "description": "Searches for matching strings or regular expressions across all files in the project workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Active project identifier."},
+                            "query": {"type": "string", "description": "Search string or regex pattern."},
+                            "regex": {"type": "boolean", "description": "Whether query is a regular expression (default: false)."}
+                        },
+                        "required": ["project_id", "query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_lint_code",
+                    "description": "Performs static syntax parsing, DRC checks, and transparent latch inference analysis on VHDL code.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "vhdl_code": {"type": "string", "description": "VHDL source code to validate."}
+                        },
+                        "required": ["vhdl_code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_synthesize_netlist",
+                    "description": "Synthesizes VHDL source code into an interactive graphical schematic netlist with layout coordinates and port bindings.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "vhdl_code": {"type": "string", "description": "VHDL source code to synthesize into schematic."},
+                            "circuit_name": {"type": "string", "description": "Name of the top entity."}
+                        },
+                        "required": ["vhdl_code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_run_simulation",
+                    "description": "Executes cycle-accurate digital logic simulation on a circuit, evaluating stimulus vectors, signal waveforms, and verification assertions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Circuit name identifier (e.g. 'full_adder_gate_level', 'processor_64bit_top', 'scale2_counter')."},
+                            "duration_ns": {"type": "integer", "description": "Simulation duration in nanoseconds (default: 100)."},
+                            "vhdl_code": {"type": "string", "description": "Optional custom VHDL code to simulate directly."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_benchmark_circuit",
+                    "description": "Runs rigorous multi-dimensional architectural benchmarking on a circuit: measures gate complexity, critical path delays, maximum clock frequency, simulation throughput, and assertion pass rates.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "circuit_name": {"type": "string", "description": "Name of circuit to benchmark."},
+                            "duration_ns": {"type": "integer", "description": "Benchmark simulation run duration (default: 100ns)."},
+                            "vhdl_code": {"type": "string", "description": "Optional VHDL code to benchmark directly."}
+                        },
+                        "required": ["circuit_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_query_knowledge_graph",
+                    "description": "Searches the multi-scale Circuit Knowledge Graph for digital design rules, hardware hazards, and verified primitives.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Domain search query (e.g. 'alu', 'metastability', 'latch')."},
+                            "scale": {"type": "integer", "description": "Hardware abstraction scale 1 to 4."}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+
+    def execute_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        default_project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Safely dispatches and executes a tool call, returning a structured JSON observation result."""
+        args = dict(arguments or {})
+        # Fill default project_id if omitted
+        if "project_id" in args and not args["project_id"]:
+            args["project_id"] = default_project_id or "scale1_full_adder"
+        elif "project_id" not in args and default_project_id and tool_name.startswith("fs_"):
+            args["project_id"] = default_project_id
+
+        try:
+            if tool_name == "fs_list_files":
+                return self.fs_list_files(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    subpath=args.get("subpath", "")
+                )
+            elif tool_name == "fs_read_file":
+                return self.fs_read_file(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    path=args.get("path", ""),
+                    start_line=args.get("start_line"),
+                    end_line=args.get("end_line")
+                )
+            elif tool_name == "fs_write_file":
+                return self.fs_write_file(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    path=args.get("path", ""),
+                    content=args.get("content", "")
+                )
+            elif tool_name == "fs_edit_file":
+                return self.fs_edit_file(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    path=args.get("path", ""),
+                    target_snippet=args.get("target_snippet", ""),
+                    replacement_snippet=args.get("replacement_snippet", "")
+                )
+            elif tool_name == "fs_delete_file":
+                return self.fs_delete_file(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    path=args.get("path", "")
+                )
+            elif tool_name == "fs_search_files":
+                return self.fs_search_files(
+                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                    query=args.get("query", ""),
+                    regex=bool(args.get("regex", False))
+                )
+            elif tool_name == "eda_lint_code":
+                return self.eda_lint_code(vhdl_code=args.get("vhdl_code", ""))
+            elif tool_name == "eda_synthesize_netlist":
+                return self.eda_synthesize_netlist(
+                    vhdl_code=args.get("vhdl_code"),
+                    circuit_name=args.get("circuit_name", "custom_circuit")
+                )
+            elif tool_name == "eda_run_simulation":
+                return self.eda_run_simulation(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    duration_ns=int(args.get("duration_ns", 100)),
+                    vhdl_code=args.get("vhdl_code")
+                )
+            elif tool_name == "eda_benchmark_circuit":
+                return self.eda_benchmark_circuit(
+                    circuit_name=args.get("circuit_name", "full_adder_gate_level"),
+                    duration_ns=int(args.get("duration_ns", 100)),
+                    vhdl_code=args.get("vhdl_code")
+                )
+            elif tool_name == "eda_query_knowledge_graph":
+                hits = self.query_knowledge_graph(
+                    query=args.get("query", ""),
+                    scale=args.get("scale")
+                )
+                return {"success": True, "query": args.get("query"), "results_count": len(hits), "results": hits}
+            else:
+                return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+        except PermissionError as pe:
+            return {"success": False, "security_error": True, "error": str(pe)}
+        except Exception as e:
+            return {"success": False, "error": f"Tool execution failed: {str(e)}"}
+

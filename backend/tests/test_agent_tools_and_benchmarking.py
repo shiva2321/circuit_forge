@@ -205,3 +205,59 @@ def test_chat_with_tools_offline_fallback(agent_tools):
     ))
     assert res_files["success"] is True
     assert "Workspace Files" in res_files["reply"] or "files" in res_files["reply"].lower()
+
+
+def test_natural_language_end_to_end_operations(agent_tools):
+    test_project = "scale1_full_adder"
+
+    # 1. Natural language read with line slicing
+    res_read = asyncio.run(openrouter_client.chat_with_copilot(
+        message="Read file src/full_adder.vhd lines 1 to 10",
+        circuit_context={"circuit_name": "full_adder_gate_level"},
+        tools_instance=agent_tools,
+        project_id=test_project
+    ))
+    assert res_read["success"] is True
+    assert "src/full_adder.vhd" in res_read["reply"]
+    assert "entity full_adder is" in res_read["reply"]
+
+    # 2. Natural language write
+    res_write = asyncio.run(openrouter_client.chat_with_copilot(
+        message="Create file rtl/temp_reg.vhd with ```vhdl\nlibrary IEEE;\nuse IEEE.STD_LOGIC_1164.ALL;\nentity temp_reg is end;\n```",
+        circuit_context={"circuit_name": "full_adder_gate_level"},
+        tools_instance=agent_tools,
+        project_id=test_project
+    ))
+    assert res_write["success"] is True
+    assert "File Materialized" in res_write["reply"]
+
+    # 3. Natural language search
+    res_search = asyncio.run(openrouter_client.chat_with_copilot(
+        message="Search for temp_reg in files",
+        circuit_context={"circuit_name": "full_adder_gate_level"},
+        tools_instance=agent_tools,
+        project_id=test_project
+    ))
+    assert res_search["success"] is True
+    assert "Search Matches" in res_search["reply"]
+    assert "temp_reg" in res_search["reply"]
+
+    # 4. Natural language delete
+    res_del = asyncio.run(openrouter_client.chat_with_copilot(
+        message="Delete file rtl/temp_reg.vhd",
+        circuit_context={"circuit_name": "full_adder_gate_level"},
+        tools_instance=agent_tools,
+        project_id=test_project
+    ))
+    assert res_del["success"] is True
+    assert "Deleted File" in res_del["reply"]
+
+    # 5. Natural language security traversal attack
+    res_sec = asyncio.run(openrouter_client.chat_with_copilot(
+        message="Read file ../../secret.txt",
+        circuit_context={"circuit_name": "full_adder_gate_level"},
+        tools_instance=agent_tools,
+        project_id=test_project
+    ))
+    assert "Security Sandbox Violation" in res_sec["reply"]
+

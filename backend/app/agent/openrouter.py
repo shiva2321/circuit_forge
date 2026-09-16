@@ -8,6 +8,7 @@ import httpx
 import json
 import re
 import os
+import time
 from typing import Dict, Any, Optional, List
 from backend.app.core.bus import global_bus
 
@@ -685,37 +686,211 @@ class OpenRouterClient:
                 # Log error and fall through to expert rule fallback
                 pass
 
-        # ── 2. Offline / Deterministic Tool-Assisted Expert Fallback ──────────────
+        # ── 2. Comprehensive Tool-Assisted Natural Language Execution Engine ────────
         msg_lower = message.lower()
         action = None
         tool_history = []
 
-        # Proactively execute tools on deterministic user intents even without API key!
         if tools_instance:
-            if "benchmark" in msg_lower:
-                bench_res = tools_instance.execute_tool("eda_benchmark_circuit", {"circuit_name": circuit_name, "duration_ns": 100})
-                tool_history.append({"tool": "eda_benchmark_circuit", "result": bench_res})
-                b = bench_res.get("benchmark_results", {})
-                reply = (
-                    f"### ⚡ Hardware Benchmark Results: `{circuit_name}`\n\n"
-                    f"- **Verdict**: `{b.get('verdict', 'VERIFIED')}` (Score: **{b.get('architectural_score')}/100**)\n"
-                    f"- **Gate Count**: `{b.get('gate_count')}` nodes, `{b.get('wire_count')}` routed wires\n"
-                    f"- **Primary I/O**: `{b.get('primary_inputs')}` inputs, `{b.get('primary_outputs')}` outputs\n"
-                    f"- **Max Clock Frequency**: `{b.get('max_clock_frequency_mhz')} MHz` (Crit path: `{b.get('est_critical_path_delay_ns')} ns`)\n"
-                    f"- **Simulation Throughput**: `{b.get('simulation_throughput_m_evals_sec')} M-evals/sec` ({b.get('simulated_cycles')} cycles in `{b.get('simulation_wall_time_sec')}s`)\n"
-                    f"- **Verification Assertions**: `{b.get('assertions_passed')}/{b.get('assertions_total')}` passed ({b.get('assertion_coverage_percent')}% coverage)\n"
-                    f"- **Estimated Dynamic Power**: `{b.get('est_dynamic_power_uw')} µW`"
-                )
-                return {"success": True, "model": "CircuitForge Expert Benchmarking Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+            # 1. Benchmarking Intent
+            if "benchmark" in msg_lower or ("run" in msg_lower and "score" in msg_lower):
+                target_circuit = circuit_name
+                bench_match = re.search(r'benchmark\s+(?:circuit\s+|on\s+|for\s+|of\s+)*([a-zA-Z0-9_]+)', message, re.IGNORECASE)
+                if bench_match and bench_match.group(1).lower() not in ("circuit", "the", "this", "my", "architecture", "hardware", "on", "for", "of", "all", "now"):
+                    target_circuit = bench_match.group(1)
 
-            elif "list files" in msg_lower or "show files" in msg_lower or "ls" in msg_lower:
+                await global_bus.broadcast({
+                    "type": "agent_thought",
+                    "data": {
+                        "time": int(time.time() * 1000),
+                        "state": "TOOL_EXEC",
+                        "action": "eda_benchmark_circuit",
+                        "thought": f"Executing architectural benchmark for '{target_circuit}'",
+                        "details": {"circuit_name": target_circuit, "duration_ns": 100}
+                    }
+                })
+
+                bench_res = tools_instance.execute_tool("eda_benchmark_circuit", {"circuit_name": target_circuit, "duration_ns": 100})
+                tool_history.append({"tool": "eda_benchmark_circuit", "result": bench_res})
+
+                await global_bus.broadcast({
+                    "type": "agent_thought",
+                    "data": {
+                        "time": int(time.time() * 1000),
+                        "state": "TOOL_RESULT",
+                        "action": "eda_benchmark_circuit_done",
+                        "thought": f"Benchmark complete: Score {bench_res.get('benchmark_results', {}).get('architectural_score')}/100",
+                        "details": bench_res
+                    }
+                })
+
+                if not bench_res.get("success"):
+                    reply = f"❌ Benchmark failed for `{target_circuit}`: {bench_res.get('error')}"
+                else:
+                    b = bench_res.get("benchmark_results", {})
+                    reply = (
+                        f"### ⚡ Hardware Benchmark Results: `{target_circuit}`\n\n"
+                        f"- **Verdict**: `{b.get('verdict', 'VERIFIED')}` (Score: **{b.get('architectural_score')}/100**)\n"
+                        f"- **Gate Count**: `{b.get('gate_count')}` nodes, `{b.get('wire_count')}` routed wires\n"
+                        f"- **Primary I/O**: `{b.get('primary_inputs')}` inputs, `{b.get('primary_outputs')}` outputs\n"
+                        f"- **Max Clock Frequency**: `{b.get('max_clock_frequency_mhz')} MHz` (Crit path: `{b.get('est_critical_path_delay_ns')} ns`)\n"
+                        f"- **Simulation Throughput**: `{b.get('simulation_throughput_m_evals_sec')} M-evals/sec` ({b.get('simulated_cycles')} cycles in `{b.get('simulation_wall_time_sec')}s`)\n"
+                        f"- **Verification Assertions**: `{b.get('assertions_passed')}/{b.get('assertions_total')}` passed ({b.get('assertion_coverage_percent')}% coverage)\n"
+                        f"- **Estimated Dynamic Power**: `{b.get('est_dynamic_power_uw')} µW`"
+                    )
+                return {"success": True, "model": "CircuitForge Benchmarking Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 2. File Reading Intent
+            read_match = re.search(r'(?:read|show|cat|view|display|inspect)\s+(?:file\s+)?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)', message, re.IGNORECASE)
+            if read_match and not any(k in msg_lower for k in ("search", "list", "grep", "find")):
+                target_file = read_match.group(1).replace("\\", "/")
+                start_l, end_l = None, None
+                line_m = re.search(r'lines?\s+(\d+)(?:\s*(?:to|-)\s*(\d+))?', message, re.IGNORECASE)
+                if line_m:
+                    start_l = int(line_m.group(1))
+                    end_l = int(line_m.group(2)) if line_m.group(2) else start_l
+
+                await global_bus.broadcast({
+                    "type": "agent_thought",
+                    "data": {
+                        "time": int(time.time() * 1000),
+                        "state": "TOOL_EXEC",
+                        "action": "fs_read_file",
+                        "thought": f"Reading '{target_file}' in project '{proj_id}'",
+                        "details": {"path": target_file, "start_line": start_l, "end_line": end_l}
+                    }
+                })
+
+                read_res = tools_instance.execute_tool("fs_read_file", {
+                    "project_id": proj_id,
+                    "path": target_file,
+                    "start_line": start_l,
+                    "end_line": end_l
+                })
+                tool_history.append({"tool": "fs_read_file", "result": read_res})
+
+                if read_res.get("security_error"):
+                    reply = f"⚠️ **Security Sandbox Violation**: Access to `{target_file}` was blocked because it escapes the project boundary."
+                elif not read_res.get("success"):
+                    reply = f"❌ **File Not Found**: Could not read `{target_file}`: {read_res.get('error')}"
+                else:
+                    ext = "vhdl" if target_file.endswith(".vhd") else "json" if target_file.endswith(".json") else "markdown"
+                    reply = (
+                        f"### 📄 File: `{target_file}` (Lines {start_l or 1}–{end_l or read_res.get('total_lines')} of {read_res.get('total_lines')})\n\n"
+                        f"```{ext}\n"
+                        f"{read_res.get('content')}\n"
+                        f"```"
+                    )
+                return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 3. File Creation / Writing Intent
+            write_match = re.search(r'(?:create|write|save)\s+(?:file\s+)?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)(?:\s+(?:with|containing|as)\s*:?\s*([\s\S]+))?', message, re.IGNORECASE)
+            if write_match and not any(k in msg_lower for k in ("goal", "plan", "pipeline")):
+                target_file = write_match.group(1).replace("\\", "/")
+                raw_code = write_match.group(2) or ""
+                code_block_m = re.search(r'```(?:vhdl)?\s*([\s\S]+?)\s*```', raw_code)
+                if code_block_m:
+                    content_to_write = code_block_m.group(1)
+                elif raw_code.strip():
+                    content_to_write = raw_code.strip()
+                else:
+                    safe_entity = re.sub(r'[^a-zA-Z0-9_]', '_', os.path.splitext(os.path.basename(target_file))[0].lower())
+                    content_to_write = (
+                        f"library IEEE;\nuse IEEE.STD_LOGIC_1164.ALL;\nuse IEEE.NUMERIC_STD.ALL;\n\n"
+                        f"entity {safe_entity} is\n"
+                        f"    port (\n"
+                        f"        clk : in  std_logic;\n"
+                        f"        rst : in  std_logic;\n"
+                        f"        din : in  std_logic_vector(7 downto 0);\n"
+                        f"        dout: out std_logic_vector(7 downto 0)\n"
+                        f"    );\n"
+                        f"end entity {safe_entity};\n\n"
+                        f"architecture rtl of {safe_entity} is\n"
+                        f"begin\n"
+                        f"    process(clk, rst)\n"
+                        f"    begin\n"
+                        f"        if rst = '1' then\n"
+                        f"            dout <= (others => '0');\n"
+                        f"        elsif rising_edge(clk) then\n"
+                        f"            dout <= din;\n"
+                        f"        end if;\n"
+                        f"    end process;\n"
+                        f"end architecture rtl;\n"
+                    )
+
+                await global_bus.broadcast({
+                    "type": "agent_thought",
+                    "data": {
+                        "time": int(time.time() * 1000),
+                        "state": "TOOL_EXEC",
+                        "action": "fs_write_file",
+                        "thought": f"Writing file '{target_file}' in project '{proj_id}'",
+                        "details": {"path": target_file, "size_bytes": len(content_to_write)}
+                    }
+                })
+
+                write_res = tools_instance.execute_tool("fs_write_file", {
+                    "project_id": proj_id,
+                    "path": target_file,
+                    "content": content_to_write
+                })
+                tool_history.append({"tool": "fs_write_file", "result": write_res})
+
+                if write_res.get("security_error"):
+                    reply = f"⚠️ **Security Sandbox Violation**: Write to `{target_file}` was blocked because it escapes the project boundary."
+                elif not write_res.get("success"):
+                    reply = f"❌ **Write Failed**: Could not write `{target_file}`: {write_res.get('error')}"
+                else:
+                    reply = (
+                        f"### 💾 File Materialized: `{target_file}`\n\n"
+                        f"- **Path**: `{target_file}`\n"
+                        f"- **Size**: `{write_res.get('size_bytes')} bytes` ({write_res.get('lines')} lines)\n"
+                        f"- **Studio Sync**: Code Editor file tree updated automatically.\n\n"
+                        f"```vhdl\n{content_to_write[:400]}\n```"
+                    )
+                return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 4. File Deletion Intent
+            del_match = re.search(r'(?:delete|remove|rm)\s+(?:file\s+)?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)', message, re.IGNORECASE)
+            if del_match and not "fault" in msg_lower:
+                target_file = del_match.group(1).replace("\\", "/")
+                del_res = tools_instance.execute_tool("fs_delete_file", {"project_id": proj_id, "path": target_file})
+                tool_history.append({"tool": "fs_delete_file", "result": del_res})
+                if del_res.get("security_error"):
+                    reply = f"⚠️ **Security Sandbox Violation**: Delete on `{target_file}` was blocked."
+                elif not del_res.get("success"):
+                    reply = f"❌ **Delete Failed**: {del_res.get('error')}"
+                else:
+                    reply = f"🗑️ **Deleted File**: Successfully removed `{target_file}` from project `{proj_id}`."
+                return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 5. File Search / Grep Intent
+            search_match = re.search(r'(?:search|find|grep)\s+(?:for\s+)?["\']?([^"\'\n]+?)["\']?\s*(?:in\s+(?:files?|workspace|project))?$', message, re.IGNORECASE)
+            if search_match and not any(k in msg_lower for k in ("kg", "knowledge", "rules", "fault", "model")):
+                query = search_match.group(1).strip()
+                search_res = tools_instance.execute_tool("fs_search_files", {"project_id": proj_id, "query": query})
+                tool_history.append({"tool": "fs_search_files", "result": search_res})
+                matches = search_res.get("matches", [])
+                if not matches:
+                    reply = f"🔍 No occurrences found for query `\"{query}\"` across `{proj_id}` files."
+                else:
+                    rows = [f"- `{m['file']}:{m['line_number']}`: `{m['line_content']}`" for m in matches[:15]]
+                    reply = (
+                        f"### 🔍 Search Matches for `\"{query}\"` ({len(matches)} occurrences in `{proj_id}`):\n\n"
+                        + "\n".join(rows)
+                    )
+                return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 6. File Listing Intent
+            elif any(k in msg_lower for k in ("list files", "show files", "workspace files", "browse files", "what files")):
                 files_res = tools_instance.execute_tool("fs_list_files", {"project_id": proj_id})
                 tool_history.append({"tool": "fs_list_files", "result": files_res})
                 flist = files_res.get("files", [])
-                lines = [f"- `{f['path']}` ({f['lines']} lines, {f['size_bytes']} bytes)" for f in flist]
-                reply = f"### 📁 Workspace Files for Project `{proj_id}`:\n" + ("\n".join(lines) if lines else "No files found.")
+                lines = [f"- `{f['path']}` ({f['lines']} lines, {f['size_bytes']} bytes, `{f['type']}`)" for f in flist]
+                reply = f"### 📁 Workspace Files for Project `{proj_id}` ({len(flist)} files):\n\n" + ("\n".join(lines) if lines else "No files found.")
                 return {"success": True, "model": "CircuitForge Sandboxed Filesystem", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
+            # 7. Lint / DRC Intent
             elif "lint" in msg_lower or "drc" in msg_lower:
                 lint_res = tools_instance.execute_tool("eda_lint_code", {"vhdl_code": vhdl_code})
                 tool_history.append({"tool": "eda_lint_code", "result": lint_res})
@@ -727,6 +902,46 @@ class OpenRouterClient:
                     f"- **Issues**: {len(lint_res.get('messages', []))} warnings/errors."
                 )
                 return {"success": True, "model": "CircuitForge DRC Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 8. Synthesis Intent
+            elif "synthesize" in msg_lower or "netlist" in msg_lower:
+                synth_res = tools_instance.execute_tool("eda_synthesize_netlist", {"circuit_name": circuit_name, "vhdl_code": vhdl_code})
+                tool_history.append({"tool": "eda_synthesize_netlist", "result": synth_res})
+                nl = synth_res.get("netlist", {})
+                reply = (
+                    f"### ⚡ Netlist Synthesized: `{circuit_name}`\n\n"
+                    f"- **Nodes**: `{len(nl.get('nodes', []))}` gates/subsystems\n"
+                    f"- **Wires**: `{len(nl.get('wires', []))}` interconnects\n"
+                    f"- **Inputs**: `{len(nl.get('inputs', []))}`, **Outputs**: `{len(nl.get('outputs', []))}`\n"
+                    f"- **Status**: Canvas netlist graph refreshed."
+                )
+                return {"success": True, "model": "CircuitForge Synthesis Engine", "reply": reply, "action": {"type": "elaborate"}, "tool_history": tool_history, "is_llm": False}
+
+            # 9. Simulation Intent
+            elif "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
+                sim_res = tools_instance.execute_tool("eda_run_simulation", {"circuit_name": circuit_name, "duration_ns": 100})
+                tool_history.append({"tool": "eda_run_simulation", "result": sim_res})
+                reply = (
+                    f"### ⏱️ Digital Simulation Complete: `{circuit_name}` (100 ns)\n\n"
+                    f"- **Cycles Evaluated**: `{sim_res.get('cycles_evaluated', 10)}`\n"
+                    f"- **Signal Transitions**: `{sim_res.get('events_count', 0)}` transitions recorded\n"
+                    f"- **Waveform Probes**: `{len(sim_res.get('signals', {}))}` active signals monitored\n"
+                    f"- **Status**: Simulation waveforms loaded in Waveform Analyzer."
+                )
+                return {"success": True, "model": "CircuitForge Cycle Simulator", "reply": reply, "action": {"type": "simulate"}, "tool_history": tool_history, "is_llm": False}
+
+            # 10. Knowledge Graph Query Intent
+            elif "kg" in msg_lower or "knowledge graph" in msg_lower or ("look up" in msg_lower and "rule" in msg_lower):
+                kg_query = re.sub(r'^(?:search|query|look up)\s+(?:kg|knowledge graph|for)\s*', '', message, flags=re.IGNORECASE).strip()
+                kg_res = tools_instance.execute_tool("eda_query_knowledge_graph", {"query": kg_query or "digital"})
+                tool_history.append({"tool": "eda_query_knowledge_graph", "result": kg_res})
+                nodes = kg_res.get("results", [])
+                rows = [f"- **{n.get('name', n.get('id'))}** (`{n.get('category')}`, Scale {n.get('scale')}): {n.get('description', '')[:100]}..." for n in nodes[:6]]
+                reply = (
+                    f"### 🧠 Knowledge Graph Query: `\"{kg_query}\"` ({len(nodes)} matches)\n\n"
+                    + ("\n".join(rows) if rows else "No matching ontology concepts found.")
+                )
+                return {"success": True, "model": "CircuitForge Knowledge Graph", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
         if "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
             reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench evaluates signal propagation, transition edges, and assertion vectors over 100ns."

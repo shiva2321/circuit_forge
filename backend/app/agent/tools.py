@@ -1288,64 +1288,92 @@ end rtl;"""
     ) -> Dict[str, Any]:
         """Safely dispatches and executes a tool call, returning a structured JSON observation result."""
         args = dict(arguments or {})
+        
+        # Robust alias normalization for frontier LLM argument variations
+        if "file_path" in args and "path" not in args:
+            args["path"] = args["file_path"]
+        if "filename" in args and "path" not in args:
+            args["path"] = args["filename"]
+        if "filepath" in args and "path" not in args:
+            args["path"] = args["filepath"]
+        if "code" in args and "vhdl_code" not in args:
+            args["vhdl_code"] = args["code"]
+        if "code" in args and "content" not in args:
+            args["content"] = args["code"]
+        if "text" in args and "content" not in args:
+            args["content"] = args["text"]
+        if "data" in args and "content" not in args:
+            args["content"] = args["data"]
+        if "target" in args and "target_snippet" not in args:
+            args["target_snippet"] = args["target"]
+        if "replacement" in args and "replacement_snippet" not in args:
+            args["replacement_snippet"] = args["replacement"]
+        if "circuit" in args and "circuit_name" not in args:
+            args["circuit_name"] = args["circuit"]
+        if "name" in args and "circuit_name" not in args and tool_name.startswith("eda_"):
+            args["circuit_name"] = args["name"]
+
         # Fill default project_id if omitted
         if "project_id" in args and not args["project_id"]:
             args["project_id"] = default_project_id or "scale1_full_adder"
         elif "project_id" not in args and default_project_id and tool_name.startswith("fs_"):
             args["project_id"] = default_project_id
 
+        p_id = args.get("project_id", default_project_id or "scale1_full_adder")
+
         try:
+            res: Dict[str, Any] = {}
             if tool_name == "fs_list_files":
-                return self.fs_list_files(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_list_files(
+                    project_id=p_id,
                     subpath=args.get("subpath", "")
                 )
             elif tool_name == "fs_read_file":
-                return self.fs_read_file(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_read_file(
+                    project_id=p_id,
                     path=args.get("path", ""),
                     start_line=args.get("start_line"),
                     end_line=args.get("end_line")
                 )
             elif tool_name == "fs_write_file":
-                return self.fs_write_file(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_write_file(
+                    project_id=p_id,
                     path=args.get("path", ""),
                     content=args.get("content", "")
                 )
             elif tool_name == "fs_edit_file":
-                return self.fs_edit_file(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_edit_file(
+                    project_id=p_id,
                     path=args.get("path", ""),
                     target_snippet=args.get("target_snippet", ""),
                     replacement_snippet=args.get("replacement_snippet", "")
                 )
             elif tool_name == "fs_delete_file":
-                return self.fs_delete_file(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_delete_file(
+                    project_id=p_id,
                     path=args.get("path", "")
                 )
             elif tool_name == "fs_search_files":
-                return self.fs_search_files(
-                    project_id=args.get("project_id", default_project_id or "scale1_full_adder"),
+                res = self.fs_search_files(
+                    project_id=p_id,
                     query=args.get("query", ""),
                     regex=bool(args.get("regex", False))
                 )
             elif tool_name == "eda_lint_code":
-                return self.eda_lint_code(vhdl_code=args.get("vhdl_code", ""))
+                res = self.eda_lint_code(vhdl_code=args.get("vhdl_code", ""))
             elif tool_name == "eda_synthesize_netlist":
-                return self.eda_synthesize_netlist(
+                res = self.eda_synthesize_netlist(
                     vhdl_code=args.get("vhdl_code"),
                     circuit_name=args.get("circuit_name", "custom_circuit")
                 )
             elif tool_name == "eda_run_simulation":
-                return self.eda_run_simulation(
+                res = self.eda_run_simulation(
                     circuit_name=args.get("circuit_name", "full_adder_gate_level"),
                     duration_ns=int(args.get("duration_ns", 100)),
                     vhdl_code=args.get("vhdl_code")
                 )
             elif tool_name == "eda_benchmark_circuit":
-                return self.eda_benchmark_circuit(
+                res = self.eda_benchmark_circuit(
                     circuit_name=args.get("circuit_name", "full_adder_gate_level"),
                     duration_ns=int(args.get("duration_ns", 100)),
                     vhdl_code=args.get("vhdl_code")
@@ -1355,9 +1383,24 @@ end rtl;"""
                     query=args.get("query", ""),
                     scale=args.get("scale")
                 )
-                return {"success": True, "query": args.get("query"), "results_count": len(hits), "results": hits}
+                res = {"success": True, "query": args.get("query"), "results_count": len(hits), "results": hits}
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+            # Proactively broadcast project_files_updated on successful filesystem changes
+            if tool_name in ("fs_write_file", "fs_edit_file", "fs_delete_file") and res.get("success"):
+                try:
+                    import asyncio
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(global_bus.broadcast({
+                        "type": "project_files_updated",
+                        "timestamp": time.time(),
+                        "data": {"project_id": p_id, "action": tool_name, "path": args.get("path", "")}
+                    }))
+                except Exception:
+                    pass
+
+            return res
 
         except PermissionError as pe:
             return {"success": False, "security_error": True, "error": str(pe)}

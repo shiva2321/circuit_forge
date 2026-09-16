@@ -7,7 +7,7 @@ Simulation Engine, and Circuit Knowledge Graph.
 import asyncio
 import os
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ from backend.app.engine.forging import forging_engine
 from backend.app.engine.qa_testing import qa_testing_engine
 from backend.app.engine.firmware_security import firmware_security_engine
 from backend.app.engine.supply_chain import supply_chain_engine
+from backend.app.engine.embedded_platforms import embedded_platforms_engine
 
 app = FastAPI(
     title="CircuitForge EDA & Knowledge Graph Server",
@@ -606,6 +607,45 @@ async def run_supply_chain_endpoint(req: SupplyChainRequest):
     return supply_chain_engine.generate_project_bom(
         circuit_name=req.circuit_name or "CircuitForge_Main_System",
         target_volume=req.target_volume or 1000
+    )
+
+
+# ========================================================
+# Embedded Platforms & Microprocessor Endpoints
+# ========================================================
+
+class PlatformGenerateRequest(BaseModel):
+    platform_id: str = "esp32_s3"
+    target_language: str = "c_cpp"
+    project_name: str = "iot_edge_controller"
+    peripherals: Optional[List[str]] = None
+
+class PlatformScaffoldRequest(BaseModel):
+    platform_id: str = "esp32_s3"
+    target_language: str = "c_cpp"
+    project_name: str = "iot_edge_controller"
+    description: Optional[str] = None
+
+@app.get("/api/platforms/catalog")
+def get_platforms_catalog_endpoint():
+    return embedded_platforms_engine.get_platforms_catalog()
+
+@app.post("/api/platforms/generate")
+def generate_platform_firmware_endpoint(req: PlatformGenerateRequest):
+    return embedded_platforms_engine.generate_platform_firmware_and_config(
+        platform_id=req.platform_id,
+        target_language=req.target_language,
+        project_name=req.project_name,
+        peripherals=req.peripherals
+    )
+
+@app.post("/api/platforms/scaffold-project")
+def scaffold_platform_project_endpoint(req: PlatformScaffoldRequest):
+    return project_mgr.create_embedded_platform_project(
+        platform_id=req.platform_id,
+        target_language=req.target_language,
+        project_name=req.project_name,
+        description=req.description
     )
 
 

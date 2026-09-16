@@ -22,8 +22,8 @@ export interface HeaderProps {
   circuits: CatalogCircuit[];
   selectedCircuit: string;
   onSelectCircuit: (id: string) => void;
-  activeTab: 'design' | 'waveform' | 'kg' | 'schematic' | 'code' | 'lifecycle';
-  onSelectTab: (tab: 'design' | 'waveform' | 'kg' | 'lifecycle') => void;
+  activeTab: 'design' | 'waveform' | 'kg' | 'schematic' | 'code' | 'lifecycle' | 'embedded';
+  onSelectTab: (tab: 'design' | 'waveform' | 'kg' | 'lifecycle' | 'embedded') => void;
   workspaceMode?: 'split' | 'schematic' | 'code';
   onChangeWorkspaceMode?: (mode: 'split' | 'schematic' | 'code') => void;
   layoutMode?: 'split' | 'tile' | 'float';
@@ -190,6 +190,19 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>Turnkey Lifecycle</span>
+          </button>
+
+          <button
+            onClick={() => onSelectTab('embedded')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
+              activeTab === 'embedded'
+                ? 'bg-gradient-to-r from-emerald-600 to-cyan-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`}
+            title="Multi-Platform Embedded & MCU Studio (Raspberry Pi Pico/SBC, ESP32-S3/C6, STM32 ARM Cortex, RISC-V, Verilog)"
+          >
+            <Cpu className="w-3.5 h-3.5 text-cyan-300" />
+            <span>Embedded & MCUs</span>
           </button>
         </div>
 

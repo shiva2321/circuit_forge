@@ -468,3 +468,42 @@ export async function runSupplyChainLifecycle(params: {
   return res.json();
 }
 
+// Multi-Platform Hardware & Embedded Systems APIs
+export async function getPlatformsCatalog(): Promise<{
+  total_platforms: number;
+  platforms: any[];
+  supported_languages: any[];
+}> {
+  const res = await fetch(`${API_BASE}/platforms/catalog`);
+  return res.json();
+}
+
+export async function generatePlatformCode(params: {
+  platform_id: string;
+  target_language: string;
+  project_name?: string;
+  peripherals?: string[];
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/platforms/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function scaffoldPlatformProject(params: {
+  platform_id: string;
+  target_language: string;
+  project_name: string;
+  description?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/platforms/scaffold-project`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+

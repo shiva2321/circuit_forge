@@ -1027,6 +1027,60 @@ class OpenRouterClient:
                 )
                 return {"success": True, "model": "CircuitForge Supply Chain Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
+            # 16. Embedded Platforms & Microprocessor Design Intent (Raspberry Pi, ESP32, STM32, RISC-V, Verilog)
+            elif any(k in msg_lower for k in ("raspberry pi", "pico", "rp2040", "esp32", "esp32-s3", "esp32-c6", "stm32", "arm cortex", "micropython", "circuitpython", "verilog", "systemverilog", "microprocessor", "microcontroller", "arduino")):
+                # Determine platform
+                if any(k in msg_lower for k in ("pico", "rp2040", "rp2350")):
+                    plat_id = "raspberry_pi_pico"
+                elif any(k in msg_lower for k in ("raspberry pi", "rpi", "pi 5", "bcm2712", "sbc", "linux board")):
+                    plat_id = "raspberry_pi_5_sbc"
+                elif any(k in msg_lower for k in ("c6", "c3", "riscv", "risc-v")) and "esp32" in msg_lower:
+                    plat_id = "esp32_c6_riscv"
+                elif "esp32" in msg_lower:
+                    plat_id = "esp32_s3"
+                elif any(k in msg_lower for k in ("stm32", "cortex", "arm")):
+                    plat_id = "stm32_arm_cortex"
+                elif any(k in msg_lower for k in ("verilog", "systemverilog")):
+                    plat_id = "verilog_systemverilog"
+                else:
+                    plat_id = "esp32_s3"
+
+                # Determine language
+                if "rust" in msg_lower:
+                    tgt_lang = "rust"
+                elif any(k in msg_lower for k in ("micropython", "circuitpython")):
+                    tgt_lang = "micropython"
+                elif "python" in msg_lower and plat_id == "raspberry_pi_5_sbc":
+                    tgt_lang = "linux_python"
+                elif "verilog" in msg_lower:
+                    tgt_lang = "verilog"
+                else:
+                    tgt_lang = "c_cpp"
+
+                proj_clean = re.sub(r'[^a-zA-Z0-9_]', '_', circuit_name.lower())
+                embed_res = tools_instance.execute_tool("eda_embedded_platform_designer", {
+                    "platform_id": plat_id,
+                    "target_language": tgt_lang,
+                    "project_name": proj_clean,
+                    "write_to_workspace": True,
+                    "project_id": proj_id
+                })
+                tool_history.append({"tool": "eda_embedded_platform_designer", "result": embed_res})
+
+                src_files = list(embed_res.get("source_files", {}).keys())
+                man_files = list(embed_res.get("manifest_files", {}).keys())
+                reply = (
+                    f"### Multi-Platform Hardware & Embedded Design Materialized\n\n"
+                    f"- **Platform**: `{embed_res.get('platform_name')}` ({embed_res.get('soc')})\n"
+                    f"- **Architecture**: `{embed_res.get('architecture')}`\n"
+                    f"- **Framework / Language**: `{tgt_lang.upper()}` ({embed_res.get('recommended_framework')})\n"
+                    f"- **Source Files Generated**: {', '.join(f'`{f}`' for f in src_files)}\n"
+                    f"- **Build Manifests Created**: {', '.join(f'`{f}`' for f in man_files)}\n"
+                    f"- **Pinout Multiplexing**: `{len(embed_res.get('pinout_definition', []))} I/O mappings` configured\n"
+                    f"- **Workspace Status**: Files materialized directly to project `{proj_id}`."
+                )
+                return {"success": True, "model": "CircuitForge Universal Embedded Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
         if "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
             reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench evaluates signal propagation, transition edges, and assertion vectors over 100ns."
             action = {"type": "simulate"}

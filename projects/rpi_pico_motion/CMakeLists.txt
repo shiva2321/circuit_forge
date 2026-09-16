@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.13)
+include(pico_sdk_import.cmake)
+project(rpi_pico_motion C CXX ASM)
+pico_sdk_init()
+add_executable(rpi_pico_motion main.c)
+target_link_libraries(rpi_pico_motion pico_stdlib pico_multicore)
+pico_add_extra_outputs(rpi_pico_motion)

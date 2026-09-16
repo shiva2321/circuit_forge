@@ -22,6 +22,7 @@ from backend.app.engine.forging import forging_engine
 from backend.app.engine.qa_testing import qa_testing_engine
 from backend.app.engine.firmware_security import firmware_security_engine
 from backend.app.engine.supply_chain import supply_chain_engine
+from backend.app.engine.embedded_platforms import embedded_platforms_engine
 
 
 def sanitize_vhdl_identifier(name: str) -> str:
@@ -1127,6 +1128,36 @@ end rtl;"""
         """Extracts production BOM with live supplier stock, pricing, and 5-10 year EOL obsolescence warnings."""
         return supply_chain_engine.generate_project_bom(circuit_name, target_volume=target_volume)
 
+    def eda_embedded_platform_designer(
+        self,
+        platform_id: str = "esp32_s3",
+        target_language: str = "c_cpp",
+        project_name: str = "iot_edge_controller",
+        peripherals: Optional[List[str]] = None,
+        write_to_workspace: bool = False,
+        project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Designs hardware pinout mappings, peripheral configurations, multi-language firmware,
+        and build manifests (PlatformIO, Cargo, CMake) for ESP32, Raspberry Pi, STM32, RISC-V, and Verilog.
+        Optionally writes all generated files directly into the active project workspace.
+        """
+        gen = embedded_platforms_engine.generate_platform_firmware_and_config(
+            platform_id=platform_id,
+            target_language=target_language,
+            project_name=project_name,
+            peripherals=peripherals
+        )
+        if write_to_workspace:
+            p_id = project_id or project_name.lower().replace(" ", "_").replace("-", "_")
+            for rel_path, content in gen["source_files"].items():
+                self.fs_write_file(project_id=p_id, path=rel_path, content=content)
+            for rel_path, content in gen["manifest_files"].items():
+                self.fs_write_file(project_id=p_id, path=rel_path, content=content)
+            gen["written_to_project"] = p_id
+
+        return gen
+
     # ── Universal Tool Calling Schemas & Execution Dispatcher ─────────────────
 
     @staticmethod
@@ -1386,6 +1417,35 @@ end rtl;"""
                         "required": ["circuit_name"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_embedded_platform_designer",
+                    "description": "Designs and generates complete multi-platform embedded firmware, pinout multiplexer tables, peripheral configurations, and build manifests (platformio.ini, Cargo.toml, CMakeLists.txt) for ESP32 (Xtensa/RISC-V), Raspberry Pi (Pico RP2040 / SBC Linux), STM32 ARM Cortex, RISC-V, and Verilog/SystemVerilog.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "platform_id": {
+                                "type": "string",
+                                "description": "Target hardware platform: 'esp32_s3', 'esp32_c6_riscv', 'raspberry_pi_pico', 'raspberry_pi_5_sbc', 'stm32_arm_cortex', 'verilog_systemverilog'."
+                            },
+                            "target_language": {
+                                "type": "string",
+                                "description": "Programming/design language: 'c_cpp', 'rust', 'micropython', 'linux_python', 'verilog'."
+                            },
+                            "project_name": {
+                                "type": "string",
+                                "description": "Name of the embedded project."
+                            },
+                            "write_to_workspace": {
+                                "type": "boolean",
+                                "description": "Whether to materialize generated source files and build manifests directly into project workspace files."
+                            }
+                        },
+                        "required": ["platform_id", "target_language"]
+                    }
+                }
             }
         ]
 
@@ -1524,6 +1584,15 @@ end rtl;"""
                 res = self.eda_bom_supply_chain_sourcing(
                     circuit_name=args.get("circuit_name", "full_adder_gate_level"),
                     target_volume=int(args.get("target_volume", 1000))
+                )
+            elif tool_name == "eda_embedded_platform_designer":
+                res = self.eda_embedded_platform_designer(
+                    platform_id=args.get("platform_id", "esp32_s3"),
+                    target_language=args.get("target_language", "c_cpp"),
+                    project_name=args.get("project_name", "iot_edge_controller"),
+                    peripherals=args.get("peripherals"),
+                    write_to_workspace=bool(args.get("write_to_workspace", False)),
+                    project_id=p_id
                 )
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}

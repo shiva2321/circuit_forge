@@ -297,10 +297,16 @@ class VHDLParser:
         # Extract architecture body
         clean_text = re.sub(r'--.*', '', vhdl_text)
         arch_match = re.search(
-            r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)*)\s+is\s*(.*?)\s*begin\s*(.*?)\s*end',
+            r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)*)\s+is\s*(.*?)\s*begin\s*(.*?)\s*end(?:\s+architecture)?(?:\s+(?!if\b|case\b|process\b|loop\b|generate\b|record\b|component\b|for\b)[a-zA-Z0-9_\-]+)?\s*;',
             clean_text,
             re.DOTALL | re.IGNORECASE
         )
+        if not arch_match:
+            arch_match = re.search(
+                r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)*)\s+is\s*(.*?)\s*begin\s*(.*)\s*end',
+                clean_text,
+                re.DOTALL | re.IGNORECASE
+            )
 
         nodes: List[NetlistNode] = []
         wires: List[NetlistWire] = []
@@ -453,18 +459,50 @@ class VHDLParser:
                 total_nodes = len(grouped_assigns)
                 node_idx = 1
                 for lhs, expr_list in grouped_assigns.items():
+                    # Check if this is a direct forwarding assignment to a primary output (e.g. Result <= r_res;)
+                    po_match = next((p for p in primary_outputs if p.name.lower() == lhs.lower()), None)
+                    if po_match and len(expr_list) == 1:
+                        src_sig = expr_list[0].strip()
+                        # Find if an existing node already produces src_sig
+                        src_node = next((n for n in nodes if any(op.name.lower() == src_sig.lower() for op in n.outputs)), None)
+                        if src_node:
+                            src_port = next(op for op in src_node.outputs if op.name.lower() == src_sig.lower())
+                            wires.append(NetlistWire(
+                                id=f"w_{src_node.id}_{po_match.id}",
+                                source_node=src_node.id,
+                                source_port=src_port.id,
+                                target_node=po_match.id,
+                                target_port=po_match.name,
+                                width=po_match.width,
+                                label=lhs
+                            ))
+                            continue
+
                     # Determine functional gate/block type
                     gate_type = "CUSTOM"
                     combined_exprs = " ".join(expr_list).lower()
+                    is_alu = (
+                        ("+" in combined_exprs or "-" in combined_exprs) and
+                        ("and" in combined_exprs or "or" in combined_exprs or "xor" in combined_exprs or "alu" in entity_name.lower())
+                    )
+                    is_cmp = (
+                        ("=" in combined_exprs or "/=" in combined_exprs) and
+                        ("zero" in lhs.lower() or "'1'" in combined_exprs or "'0'" in combined_exprs)
+                    )
                     is_mux = (
-                        len(expr_list) > 1 or
-                        bool(case_selectors) or
-                        ("when " in combined_exprs and "else" in combined_exprs) or
+                        (len(expr_list) > 1 and not is_alu) or
+                        ("when " in combined_exprs and "else" in combined_exprs and not is_cmp) or
                         "mux" in entity_name.lower() or
                         "multiplex" in entity_name.lower()
                     )
 
-                    if is_mux:
+                    if is_alu:
+                        gate_type = "ALU"
+                        label = f"32-Bit ALU ({lhs})" if "32" in entity_name or any(p.width == 32 for p in primary_inputs) else f"ALU ({lhs})"
+                    elif is_cmp:
+                        gate_type = "CMP"
+                        label = f"{lhs} (Zero Detect)" if "zero" in lhs.lower() else f"{lhs} (CMP)"
+                    elif is_mux:
                         gate_type = "MUX"
                         branch_count = max(len(expr_list), 2)
                         label = f"MUX {branch_count}:1 ({lhs})" if len(expr_list) > 1 else f"{lhs} (MUX)"
@@ -503,13 +541,14 @@ class VHDLParser:
                                 if t.lower() != lhs.lower() and t not in operands:
                                     operands.append(t)
 
-                    # Add case selectors (e.g. 'sel') and sensitivity inputs
-                    for cs in case_selectors:
-                        if cs not in operands and cs.lower() != lhs.lower():
-                            operands.insert(0, cs)
-                    for ps in process_sens:
-                        if ps not in operands and ps.lower() != lhs.lower() and ps.lower() not in ("clk", "clock"):
-                            operands.append(ps)
+                    # Add case selectors (e.g. 'sel') and sensitivity inputs for multi-branch/process blocks
+                    if (len(expr_list) > 1 or is_mux or is_alu) and not is_cmp:
+                        for cs in case_selectors:
+                            if cs not in operands and cs.lower() != lhs.lower():
+                                operands.insert(0, cs)
+                        for ps in process_sens:
+                            if ps not in operands and ps.lower() != lhs.lower() and ps.lower() not in ("clk", "clock"):
+                                operands.append(ps)
 
                     # If this is the sole consolidated top-level node, ensure all primary inputs are included
                     if total_nodes == 1:

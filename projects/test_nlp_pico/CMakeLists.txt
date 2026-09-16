@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.13)
+include(pico_sdk_import.cmake)
+project(pico_robotics C CXX ASM)
+pico_sdk_init()
+add_executable(pico_robotics main.c)
+target_link_libraries(pico_robotics pico_stdlib pico_multicore hardware_i2c hardware_pio)
+pico_add_extra_outputs(pico_robotics)

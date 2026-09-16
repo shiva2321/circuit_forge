@@ -292,6 +292,61 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     return { x: transformed.x, y: transformed.y };
   }, []);
 
+  // Dynamically calculate bounding box and auto-frame circuit to fit container
+  const handleFitToView = useCallback(() => {
+    if (!netlist) return;
+    const allX: number[] = [];
+    const allY: number[] = [];
+
+    (netlist.primary_inputs || []).forEach((pi, i) => {
+      const pos = nodePositions[pi.id] || nodePositions[pi.name] || { x: 40, y: 80 + i * 70 };
+      allX.push(pos.x, pos.x + 80);
+      allY.push(pos.y, pos.y + 40);
+    });
+
+    (netlist.primary_outputs || []).forEach((po, i) => {
+      const pos = nodePositions[po.id] || nodePositions[po.name] || { x: 980, y: 80 + i * 70 };
+      allX.push(pos.x, pos.x + 80);
+      allY.push(pos.y, pos.y + 40);
+    });
+
+    (netlist.nodes || []).forEach((n) => {
+      const pos = nodePositions[n.id] || { x: n.x || 200, y: n.y || 100 };
+      const w = n.width || 140;
+      const h = n.height || 100;
+      allX.push(pos.x, pos.x + w);
+      allY.push(pos.y, pos.y + h);
+    });
+
+    if (allX.length === 0) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+
+    const minX = Math.min(...allX);
+    const maxX = Math.max(...allX);
+    const minY = Math.min(...allY);
+    const maxY = Math.max(...allY);
+
+    const circuitW = maxX - minX + 100;
+    const circuitH = maxY - minY + 100;
+    const circuitCenterX = (minX + maxX) / 2;
+    const circuitCenterY = (minY + maxY) / 2;
+
+    const svgRect = svgRef.current ? svgRef.current.getBoundingClientRect() : { width: 700, height: 600 };
+    const containerW = svgRect.width > 100 ? svgRect.width : 700;
+    const containerH = svgRect.height > 100 ? svgRect.height : 600;
+
+    const targetZoom = Math.min(1.4, Math.max(0.4, Math.min((containerW - 60) / circuitW, (containerH - 60) / circuitH)));
+    const targetPanX = containerW / 2 - circuitCenterX * targetZoom;
+    const targetPanY = containerH / 2 - circuitCenterY * targetZoom;
+
+    setZoom(Number(targetZoom.toFixed(2)));
+    setPan({ x: Math.round(targetPanX), y: Math.round(targetPanY) });
+    addNotification('info', 'Circuit Auto-Framed', `View centered at ${Math.round(targetZoom * 100)}% scale`);
+  }, [netlist, nodePositions, addNotification]);
+
   // Global window listeners for drag, pan, keyboard, and click-away dismissal
   useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
@@ -1263,7 +1318,33 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         </button>
 
         <div className="h-4 w-px bg-slate-700/80" />
-        <span className="text-[11px] text-slate-400 px-1.5 font-mono font-bold">{Math.round(zoom * 100)}%</span>
+
+        {/* Zoom & Fit Controls */}
+        <button
+          onClick={() => setZoom((z) => Math.max(0.15, Number((z * 0.85).toFixed(2))))}
+          className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition cursor-pointer"
+          title="Zoom Out (-)"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+
+        <span className="text-[11px] text-slate-300 px-1 font-mono font-bold">{Math.round(zoom * 100)}%</span>
+
+        <button
+          onClick={() => setZoom((z) => Math.min(3.5, Number((z * 1.15).toFixed(2))))}
+          className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition cursor-pointer"
+          title="Zoom In (+)"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={handleFitToView}
+          className="p-1.5 hover:bg-purple-900/60 text-purple-300 hover:text-white rounded-lg transition cursor-pointer"
+          title="Fit to View / Auto-Center"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Top Right: Contextual Status Pill (Wiring Mode or Agent Intervention) */}
@@ -1537,11 +1618,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     onMouseLeave={() => setHoveredPin(null)}
                     className="cursor-crosshair"
                   >
-                    <title>{`Wire from ${pin.name}`}</title>
+                    <title>{`Wire from ${pin.name} (Click to route)`}</title>
+                    {/* Generous invisible click target (radius 18px = 36px diameter) */}
+                    <circle cx="130" cy="19" r="18" fill="transparent" pointerEvents="all" />
+
+                    {/* Pulsing target indicator when user is wiring towards an input */}
+                    {wiringStart && !wiringStart.isSource && (
+                      <circle cx="130" cy="19" r="12" fill="none" stroke="#34d399" strokeWidth="2" strokeDasharray="3 2" className="animate-spin" />
+                    )}
+
                     <circle
                       cx="130"
                       cy="19"
-                      r={isHovered || isStartPin ? 6 : 4.5}
+                      r={isHovered || isStartPin ? 6.5 : 4.5}
                       className={
                         isStartPin
                           ? 'fill-purple-400 stroke-white stroke-2 animate-ping'
@@ -1590,11 +1679,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     onMouseLeave={() => setHoveredPin(null)}
                     className="cursor-crosshair"
                   >
-                    <title>{`Wire to ${pin.name}`}</title>
+                    <title>{`Wire to ${pin.name} (Click to connect)`}</title>
+                    {/* Generous invisible click target (radius 18px = 36px diameter) */}
+                    <circle cx="0" cy="19" r="18" fill="transparent" pointerEvents="all" />
+
+                    {/* Pulsing target indicator when user is wiring from an output */}
+                    {wiringStart && wiringStart.isSource && (
+                      <circle cx="0" cy="19" r="12" fill="none" stroke="#34d399" strokeWidth="2" strokeDasharray="3 2" className="animate-spin" />
+                    )}
+
                     <circle
                       cx="0"
                       cy="19"
-                      r={isHovered || isStartPin ? 6 : 4.5}
+                      r={isHovered || isStartPin ? 6.5 : 4.5}
                       className={
                         isStartPin
                           ? 'fill-purple-400 stroke-white stroke-2 animate-ping'
@@ -1711,6 +1808,31 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                   }}
                   className="cursor-pointer group"
                 >
+                  {/* Generous invisible hit path for effortless 1-click selection and right-click (18px wide) */}
+                  <path
+                    d={fullPath}
+                    fill="none"
+                    stroke="transparent"
+                    strokeWidth="18"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    pointerEvents="stroke"
+                    className="cursor-pointer"
+                  />
+
+                  {/* Selection Pulsing Aura */}
+                  {selectedWire?.id === wire.id && (
+                    <path
+                      d={fullPath}
+                      fill="none"
+                      stroke="#c084fc"
+                      strokeWidth={strokeWidth + 5}
+                      strokeOpacity="0.5"
+                      strokeDasharray="6 3"
+                      className="animate-pulse pointer-events-none"
+                    />
+                  )}
+
                   <path
                     d={fullPath}
                     fill="none"
@@ -1736,7 +1858,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
                   {/* Non-overlapping wire state pill badge */}
                   {(isBus || selectedWire?.id === wire.id) && (
-                    <g transform={`translate(${badgeX}, ${badgeY})`} className="pointer-events-none">
+                    <g transform={`translate(${badgeX}, ${badgeY})`}>
                       <rect
                         x="-16"
                         y="-7"
@@ -1744,13 +1866,43 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                         height="14"
                         rx="4"
                         fill="#090d16"
-                        stroke={wireColor}
-                        strokeWidth="1"
+                        stroke={selectedWire?.id === wire.id ? '#c084fc' : wireColor}
+                        strokeWidth={selectedWire?.id === wire.id ? '1.5' : '1'}
                         className="shadow-md"
                       />
-                      <text x="0" y="3" textAnchor="middle" className="fill-slate-100 font-mono text-[8.5px] font-bold">
+                      <text x="0" y="3" textAnchor="middle" className="fill-slate-100 font-mono text-[8.5px] font-bold pointer-events-none">
                         {wireVal.length > 1 ? `0x${parseInt(wireVal, 2).toString(16).toUpperCase()}` : wireVal}
                       </text>
+
+                      {/* Quick 1-Click Delete Button when wire is selected */}
+                      {selectedWire?.id === wire.id && onDeleteWire && (
+                        <g
+                          transform="translate(24, 0)"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteWire(wire.id);
+                            setSelectedWire(null);
+                            addNotification('info', 'Wire Deleted', `Removed connection on net ${wire.label || wire.id}.`);
+                          }}
+                          className="cursor-pointer group/del"
+                        >
+                          <title>Delete Wire Net (Del)</title>
+                          <rect
+                            x="-9"
+                            y="-9"
+                            width="18"
+                            height="18"
+                            rx="5"
+                            className="fill-rose-950/95 stroke-rose-500 stroke-1 group-hover/del:fill-rose-600 transition-colors shadow-lg"
+                          />
+                          <path
+                            d="M -3 -3 L 3 3 M 3 -3 L -3 3"
+                            stroke="white"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
+                        </g>
+                      )}
                     </g>
                   )}
                 </g>
@@ -1863,10 +2015,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                         onMouseLeave={() => setHoveredPin(null)}
                         className="cursor-crosshair"
                       >
+                        <title>{`Connect wire to ${node.label} (${pin.name})`}</title>
+                        {/* Generous invisible click target (radius 16px = 32px diameter) */}
+                        <circle cx={pinPos.x} cy={pinPos.y} r="16" fill="transparent" pointerEvents="all" />
+
+                        {/* Pulsing target indicator when user is wiring from an output */}
+                        {wiringStart && wiringStart.isSource && (
+                          <circle cx={pinPos.x} cy={pinPos.y} r="10" fill="none" stroke="#34d399" strokeWidth="2" strokeDasharray="3 2" className="animate-spin" />
+                        )}
+
                         <circle
                           cx={pinPos.x}
                           cy={pinPos.y}
-                          r={isHovered || isStartPin ? 5.5 : 3.5}
+                          r={isHovered || isStartPin ? 6 : 4}
                           className={
                             isStartPin
                               ? 'fill-purple-400 stroke-white stroke-2 animate-ping'
@@ -1903,10 +2064,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                         onMouseLeave={() => setHoveredPin(null)}
                         className="cursor-crosshair"
                       >
+                        <title>{`Route wire from ${node.label} (${pin.name})`}</title>
+                        {/* Generous invisible click target (radius 16px = 32px diameter) */}
+                        <circle cx={pinPos.x} cy={pinPos.y} r="16" fill="transparent" pointerEvents="all" />
+
+                        {/* Pulsing target indicator when user is wiring towards an input */}
+                        {wiringStart && !wiringStart.isSource && (
+                          <circle cx={pinPos.x} cy={pinPos.y} r="10" fill="none" stroke="#34d399" strokeWidth="2" strokeDasharray="3 2" className="animate-spin" />
+                        )}
+
                         <circle
                           cx={pinPos.x}
                           cy={pinPos.y}
-                          r={isHovered || isStartPin ? 5.5 : 3.5}
+                          r={isHovered || isStartPin ? 6 : 4}
                           className={
                             isStartPin
                               ? 'fill-purple-400 stroke-white stroke-2 animate-ping'
@@ -2406,7 +2576,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       {/* EDA SAFETY & PROHIBITED OPERATIONS MODAL */}
       {safetyModal && safetyModal.open && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
             <div className="flex items-start space-x-3">
               <div
@@ -2493,7 +2663,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       {/* Human + AI Co-Working Guide Modal */}
       {showCoWorkGuide && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2">

@@ -1,0 +1,15 @@
+{
+  "id": "rest_rpi5_gateway",
+  "name": "REST_RPi5_Gateway",
+  "platform_id": "raspberry_pi_5_sbc",
+  "platform_name": "Raspberry Pi 5 / CM5",
+  "soc": "Broadcom BCM2712",
+  "architecture": "Quad-core ARM Cortex-A76 64-bit @ 2.4GHz",
+  "target_language": "linux_python",
+  "scale": 3,
+  "scale_label": "Scale 3: Raspberry Pi 5 / CM5",
+  "description": "Scaffolded via REST API",
+  "created_at": 1789529746.2437184,
+  "last_modified": 1789529746.2437184,
+  "top_file": "edge_controller.py"
+}

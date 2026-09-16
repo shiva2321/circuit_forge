@@ -1,0 +1,7 @@
+Raspberry Pi 5 40-Pin Header Configuration:
+Pin 1  : 3V3 Power
+Pin 6  : Ground
+Pin 11 : GPIO 17 -> Status LED
+Pin 12 : GPIO 18 -> Hardware PWM (1 kHz)
+Pin 13 : GPIO 27 -> Input Button Trigger
+Pin 3/5: GPIO 2/3 -> I2C1 Bus (Sensors)

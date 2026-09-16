@@ -430,23 +430,52 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           });
           setExpandedFolders(folders);
 
-          // Find first code file
+          // Find first source code file (prioritize src/ and rtl/ directories)
           const findFirstFile = (nodes: FileTreeNode[]): FileTreeNode | null => {
-            for (const n of nodes) {
-              if (!n.is_dir && (n.name.endsWith('.vhd') || n.name.endsWith('.c') || n.name.endsWith('.py') || n.name.endsWith('.v') || n.name.endsWith('.rs'))) return n;
-              if (n.is_dir && n.children) {
-                const found = findFirstFile(n.children);
-                if (found) return found;
+            const allFiles: FileTreeNode[] = [];
+            const collect = (list: FileTreeNode[]) => {
+              for (const item of list) {
+                if (item.is_dir && item.children) {
+                  collect(item.children);
+                } else if (!item.is_dir) {
+                  allFiles.push(item);
+                }
               }
-            }
-            for (const n of nodes) {
-              if (!n.is_dir) return n;
-              if (n.is_dir && n.children) {
-                const found = findFirstFile(n.children);
-                if (found) return found;
-              }
-            }
-            return null;
+            };
+            collect(nodes);
+
+            // 1. Prefer HDL / primary source in src/ or rtl/
+            const primarySource = allFiles.find(
+              (f) =>
+                (f.path.includes('src/') || f.path.includes('rtl/')) &&
+                (f.name.endsWith('.vhd') ||
+                  f.name.endsWith('.vhdl') ||
+                  f.name.endsWith('.v') ||
+                  f.name.endsWith('.sv') ||
+                  f.name.endsWith('.c') ||
+                  f.name.endsWith('.py') ||
+                  f.name.endsWith('.rs'))
+            );
+            if (primarySource) return primarySource;
+
+            // 2. Any HDL or source code file
+            const anySource = allFiles.find(
+              (f) =>
+                f.name.endsWith('.vhd') ||
+                f.name.endsWith('.vhdl') ||
+                f.name.endsWith('.v') ||
+                f.name.endsWith('.sv') ||
+                f.name.endsWith('.c') ||
+                f.name.endsWith('.py') ||
+                f.name.endsWith('.rs')
+            );
+            if (anySource) return anySource;
+
+            // 3. Any non-meta file
+            const nonMeta = allFiles.find((f) => !f.name.endsWith('.json') && !f.name.endsWith('.sdc'));
+            if (nonMeta) return nonMeta;
+
+            return allFiles[0] || null;
           };
 
           const top = findFirstFile(res.tree);
@@ -1198,7 +1227,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Create New File / Folder */}
       {newEntryModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <form
             onSubmit={handleCreateEntrySubmit}
             className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in"
@@ -1226,7 +1255,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
             <div className="space-y-1">
               <label className="text-xs text-slate-400 font-mono">
-                {newEntryModal.isDir ? 'Folder Name:' : 'File Name:'}
+                {newEntryModal.isDir ? 'Folder Name:' : 'File Name (.vhd):'}
               </label>
               <input
                 type="text"
@@ -1267,7 +1296,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Rename Entry */}
       {renameModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <form
             onSubmit={handleRenameSubmit}
             className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in"
@@ -1325,7 +1354,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Delete Confirmation */}
       {deleteModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in">
             <div className="flex items-center space-x-2.5 text-rose-400 font-bold text-sm">
               <Trash2 className="w-5 h-5" />
@@ -1357,7 +1386,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: VHDL Toolchain Architecture & Safety Manager */}
       {isToolchainModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-5 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center space-x-2.5">

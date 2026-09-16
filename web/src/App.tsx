@@ -23,6 +23,7 @@ import {
   configureAgent,
 } from './services/api';
 import { evaluateCircuitLogic } from './utils/circuitSimulator';
+import { netlistToVHDL } from './utils/netlistToVHDL';
 
 export function App() {
   const [circuits, setCircuits] = useState<CatalogCircuit[]>([]);
@@ -136,21 +137,31 @@ export function App() {
     localStorage.setItem('circuitforge_active_project', activeProjectId);
   }, [activeProjectId]);
 
+  const circuitToProjectMap: Record<string, string> = {
+    full_adder_gate_level: 'scale1_full_adder',
+    counter_8bit_updown: 'scale2_counter',
+    alu_32bit_subsystem: 'scale3_alu',
+    riscv_rv32i_core: 'scale4_riscv',
+    scale1_full_adder: 'scale1_full_adder',
+    scale2_counter: 'scale2_counter',
+    scale3_alu: 'scale3_alu',
+    scale4_riscv: 'scale4_riscv',
+  };
+
+  const projectToCircuitMap: Record<string, string> = {
+    scale1_full_adder: 'full_adder_gate_level',
+    scale2_counter: 'counter_8bit_updown',
+    scale3_alu: 'alu_32bit_subsystem',
+    scale4_riscv: 'riscv_rv32i_core',
+  };
+
   const handleSelectProject = async (projectId: string) => {
     setActiveProjectId(projectId);
     localStorage.setItem('circuitforge_project_initialized', 'true');
 
-    const mapping: Record<string, string> = {
-      scale1_full_adder: 'full_adder_gate_level',
-      scale2_counter: 'scale2_counter',
-      scale3_alu: 'scale3_alu',
-      scale4_riscv: 'scale4_riscv',
-      mux_4to1: 'mux_4to1',
-    };
-
-    const targetCircuit = mapping[projectId] || projectId;
+    const targetCircuit = projectToCircuitMap[projectId] || projectId;
     setSelectedCircuit(targetCircuit);
-    await loadCircuit(targetCircuit);
+    await loadCircuit(targetCircuit, false);
   };
 
   // Global mousemove and mouseup listeners for smooth dragging across canvas & Monaco
@@ -354,8 +365,14 @@ export function App() {
     };
   }, []);
 
-  const loadCircuit = async (circuitId: string) => {
+  const loadCircuit = async (circuitId: string, updateProject: boolean = true) => {
     setSelectedCircuit(circuitId);
+    if (updateProject) {
+      const mappedProj = circuitToProjectMap[circuitId];
+      if (mappedProj && mappedProj !== activeProjectId) {
+        setActiveProjectId(mappedProj);
+      }
+    }
     try {
       const net = await synthesizeCircuit(circuitId);
       setNetlist(net);
@@ -622,6 +639,18 @@ end rtl;`);
     setProbeValues(simState.probeValues);
   };
 
+  const syncNetlistToCode = (updatedNetlist: NetlistGraph) => {
+    try {
+      const generated = netlistToVHDL(updatedNetlist);
+      if (generated) {
+        setVhdlCode(generated);
+        setSyncStatus('synced');
+      }
+    } catch (err) {
+      console.error('Failed to serialize netlist to VHDL', err);
+    }
+  };
+
   const handleAddComponent = (blueprint: ComponentBlueprint, pos: { x: number; y: number }) => {
     if (!netlist) return;
     const count = netlist.nodes.filter((n) => n.type === blueprint.type).length + 1;
@@ -656,6 +685,7 @@ end rtl;`);
     setNetlist(updatedNetlist);
     const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
     setProbeValues(simState.probeValues);
+    syncNetlistToCode(updatedNetlist);
   };
 
   const handleDeleteComponent = (nodeId: string) => {
@@ -668,6 +698,7 @@ end rtl;`);
     setNetlist(updatedNetlist);
     const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
     setProbeValues(simState.probeValues);
+    syncNetlistToCode(updatedNetlist);
   };
 
   const handleAddWire = (newWire: NetlistWire) => {
@@ -687,6 +718,7 @@ end rtl;`);
     setNetlist(updatedNetlist);
     const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
     setProbeValues(simState.probeValues);
+    syncNetlistToCode(updatedNetlist);
   };
 
   const handleDeleteWire = (wireId: string) => {
@@ -698,6 +730,7 @@ end rtl;`);
     setNetlist(updatedNetlist);
     const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
     setProbeValues(simState.probeValues);
+    syncNetlistToCode(updatedNetlist);
   };
 
   const currentScale = netlist ? netlist.scale : 1;

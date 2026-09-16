@@ -1,0 +1,10 @@
+{
+  "id": "scale3_alu",
+  "name": "32-Bit Multi-Function ALU",
+  "scale": 3,
+  "scale_label": "Scale 3: Subsystem",
+  "description": "32-bit arithmetic, logic, and comparison unit with zero flag output.",
+  "created_at": 1789518725.071978,
+  "last_modified": 1789518725.071978,
+  "top_file": "src/alu_32bit.vhd"
+}

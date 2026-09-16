@@ -1,0 +1,10 @@
+{
+  "id": "processor",
+  "name": "processor",
+  "scale": 4,
+  "scale_label": "Scale 4: Processor Core",
+  "description": "Circuit project created with Scale 4 template.",
+  "created_at": 1789521062.2283783,
+  "last_modified": 1789521062.2283783,
+  "top_file": "src/processor.vhd"
+}

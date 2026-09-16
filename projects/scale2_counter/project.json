@@ -1,0 +1,10 @@
+{
+  "id": "scale2_counter",
+  "name": "8-Bit Synchronous Counter",
+  "scale": 2,
+  "scale_label": "Scale 2: RTL Module",
+  "description": "8-bit up/down registered counter with enable, synchronous reset, and load.",
+  "created_at": 1789518725.0696685,
+  "last_modified": 1789518725.0696685,
+  "top_file": "src/counter_8bit.vhd"
+}

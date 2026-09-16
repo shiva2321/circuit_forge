@@ -1,0 +1,10 @@
+{
+  "id": "mux_4to1",
+  "name": "4-to-1 Multiplexer",
+  "scale": 1,
+  "scale_label": "Scale 1: Gate Level",
+  "description": "Single-node consolidated 4:1 multiplexer with select input.",
+  "created_at": 1789518725.072528,
+  "last_modified": 1789518725.072528,
+  "top_file": "src/mux_4to1.vhd"
+}

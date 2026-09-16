@@ -1,0 +1,10 @@
+{
+  "id": "scale4_riscv",
+  "name": "RISC-V RV32I Processor Core",
+  "scale": 4,
+  "scale_label": "Scale 4: Processor Core",
+  "description": "Pipelined 32-bit RISC-V CPU core with Fetch, Decode, Execute, Memory, and Writeback stages.",
+  "created_at": 1789518725.071978,
+  "last_modified": 1789518725.071978,
+  "top_file": "src/riscv_core.vhd"
+}

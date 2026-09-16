@@ -649,6 +649,42 @@ def scaffold_platform_project_endpoint(req: PlatformScaffoldRequest):
     )
 
 
+class CodeValidateRequest(BaseModel):
+    code: str
+    language: str = "vhdl"
+    file_path: Optional[str] = None
+
+class LifecycleExportRequest(BaseModel):
+    project_id: str = "scale1_full_adder"
+    artifact_type: str = "bom"
+    circuit_name: str = "CircuitForge_System"
+    payload: Optional[Any] = None
+
+@app.post("/api/code/validate")
+def validate_code_endpoint(req: CodeValidateRequest):
+    return tools.eda_validate_code(
+        code=req.code,
+        language=req.language,
+        file_path=req.file_path
+    )
+
+@app.post("/api/lifecycle/export-artifact")
+async def export_lifecycle_artifact_endpoint(req: LifecycleExportRequest):
+    res = tools.eda_export_lifecycle_artifact(
+        project_id=req.project_id,
+        artifact_type=req.artifact_type,
+        circuit_name=req.circuit_name,
+        payload=req.payload
+    )
+    if res.get("success"):
+        await global_bus.broadcast({
+            "type": "project_files_updated",
+            "timestamp": time.time(),
+            "data": {"project_id": req.project_id, "action": "export_lifecycle_artifact", "artifact_type": req.artifact_type}
+        })
+    return res
+
+
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await global_bus.connect(websocket)

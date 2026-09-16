@@ -506,4 +506,48 @@ export async function scaffoldPlatformProject(params: {
   return res.json();
 }
 
+// Multi-Language Code Validation & Syntax Linting
+export async function validateCode(params: {
+  code: string;
+  language?: string;
+  file_path?: string;
+}): Promise<{
+  success: boolean;
+  language: string;
+  is_valid: boolean;
+  error_count: number;
+  warning_count: number;
+  messages: Array<{ line: number; severity: string; message: string; rule_id: string }>;
+}> {
+  const res = await fetch(`${API_BASE}/code/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+// Lifecycle Artifact Workspace Export
+export async function exportLifecycleArtifact(params: {
+  project_id: string;
+  artifact_type: string;
+  circuit_name?: string;
+  payload?: any;
+}): Promise<{
+  success: boolean;
+  project_id: string;
+  artifact_type: string;
+  circuit_name: string;
+  exported_files: Record<string, any>;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/lifecycle/export-artifact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+
 

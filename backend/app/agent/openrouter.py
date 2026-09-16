@@ -553,17 +553,19 @@ class OpenRouterClient:
         # ── 1. Autonomous Frontier Tool Calling Loop (If API Key Available) ───────
         if key and len(key) > 10:
             system_prompt = (
-                "You are CircuitForge Autonomous EDA Copilot: an expert digital logic architect with full access to "
-                "sandboxed filesystem tools and hardware simulation/benchmarking engines.\n\n"
-                "Capabilities:\n"
-                "- Filesystem: fs_list_files, fs_read_file, fs_write_file, fs_edit_file, fs_delete_file, fs_search_files\n"
-                "- Hardware EDA: eda_lint_code, eda_synthesize_netlist, eda_run_simulation, eda_benchmark_circuit, eda_query_knowledge_graph\n"
+                "You are CircuitForge Autonomous EDA Copilot: an elite turnkey hardware architect and embedded systems engineer "
+                "with full access to sandboxed filesystem tools, hardware simulation engines, turnkey manufacturing tools, and embedded platforms.\n\n"
+                "Autonomous Tool Capabilities:\n"
+                "- Workspace Filesystem: fs_list_files, fs_read_file, fs_write_file, fs_edit_file, fs_delete_file, fs_search_files\n"
+                "- Digital Logic EDA: eda_lint_code, eda_synthesize_netlist, eda_run_simulation, eda_benchmark_circuit, eda_query_knowledge_graph\n"
+                "- Turnkey Hardware Lifecycle: eda_multiphysics_simulation, eda_dfm_stackup_audit, eda_qa_virtual_inspection, eda_generate_firmware_security, eda_bom_supply_chain_sourcing, eda_export_lifecycle_artifact\n"
+                "- Embedded & Multi-Platform: eda_embedded_platform_designer (ESP32-S3/C6, Raspberry Pi Pico/5, STM32, RISC-V, Verilog), eda_validate_code (Python, C, C++, Rust, Verilog, VHDL, JSON)\n"
                 f"- Active Project: {proj_id}\n"
                 f"- Active Circuit: {circuit_name} ({gate_count} gates, {wire_count} nets)\n"
                 f"- Probes / Logic States: {json.dumps(probes)}\n"
                 f"- Injected Faults: {json.dumps(faults)}\n\n"
                 "Always proactively execute tools when the user requests to see, analyze, benchmark, modify, create, "
-                "or test hardware designs or files. Execute your tools in a self-healing loop until the task is complete."
+                "or test hardware designs, lifecycle artifacts, embedded firmware, or files. Execute your tools in a self-healing loop until the task is complete."
             )
 
             headers = {
@@ -1080,6 +1082,81 @@ class OpenRouterClient:
                     f"- **Workspace Status**: Files materialized directly to project `{proj_id}`."
                 )
                 return {"success": True, "model": "CircuitForge Universal Embedded Engine", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 17. Lifecycle Artifact Workspace Export Intent (Save to active project)
+            elif any(k in msg_lower for k in ("save bom", "export bom", "save firmware", "export firmware", "save stackup", "export artifact", "materialize artifact", "save driver")):
+                # Determine artifact type
+                if any(k in msg_lower for k in ("bom", "bill of materials", "procurement")):
+                    art_type = "bom"
+                elif any(k in msg_lower for k in ("rust", "pac")):
+                    art_type = "rust_pac"
+                elif any(k in msg_lower for k in ("rtos", "freertos", "task")):
+                    art_type = "rtos_task"
+                elif any(k in msg_lower for k in ("puf", "security", "rot", "root of trust", "manifest")):
+                    art_type = "security_manifest"
+                elif any(k in msg_lower for k in ("stackup", "dfm", "layer")):
+                    art_type = "dfm_stackup"
+                elif any(k in msg_lower for k in ("multiphysics", "thermal", "physics")):
+                    art_type = "multiphysics"
+                else:
+                    art_type = "c_hal"
+
+                exp_res = tools_instance.execute_tool("eda_export_lifecycle_artifact", {
+                    "project_id": proj_id,
+                    "artifact_type": art_type,
+                    "circuit_name": circuit_name
+                })
+                tool_history.append({"tool": "eda_export_lifecycle_artifact", "result": exp_res})
+                files = list(exp_res.get("exported_files", {}).keys())
+                reply = (
+                    f"### 📦 Lifecycle Artifact Exported to Project `{proj_id}`\n\n"
+                    f"- **Artifact Type**: `{art_type.upper()}`\n"
+                    f"- **Circuit Reference**: `{circuit_name}`\n"
+                    f"- **Exported File(s)**: {', '.join(f'`{f}`' for f in files) if files else '`' + art_type + '`'}\n"
+                    f"- **Status**: Successfully materialized in project workspace. Available in Code Editor."
+                )
+                return {"success": True, "model": "CircuitForge Lifecycle Exporter", "reply": reply, "tool_history": tool_history, "is_llm": False}
+
+            # 18. Multi-Language Code Validation & Syntax Linting Intent
+            elif any(k in msg_lower for k in ("validate code", "check syntax", "verify syntax", "lint code", "syntax check", "test code")):
+                # Determine language from message or context
+                tgt_lang = "vhdl"
+                if "python" in msg_lower or ".py" in msg_lower:
+                    tgt_lang = "python"
+                elif "rust" in msg_lower or ".rs" in msg_lower:
+                    tgt_lang = "rust"
+                elif "verilog" in msg_lower or ".v" in msg_lower or ".sv" in msg_lower:
+                    tgt_lang = "verilog"
+                elif any(k in msg_lower for k in ("c++", "cpp")):
+                    tgt_lang = "cpp"
+                elif "c" in msg_lower or ".c" in msg_lower:
+                    tgt_lang = "c"
+                elif "json" in msg_lower or ".json" in msg_lower:
+                    tgt_lang = "json"
+
+                target_code = vhdl_code or (circuit_context.get("vhdl_code") if circuit_context else "") or ""
+                # If code snippet in message, extract it
+                code_match = re.search(r'```(?:[a-zA-Z0-9_-]+)?\s*\n?(.*?)```', message, re.DOTALL)
+                if code_match:
+                    target_code = code_match.group(1).strip()
+
+                val_res = tools_instance.execute_tool("eda_validate_code", {
+                    "code": target_code,
+                    "language": tgt_lang
+                })
+                tool_history.append({"tool": "eda_validate_code", "result": val_res})
+                status_badge = "✅ PASS" if val_res.get("is_valid") else "❌ SYNTAX ERRORS DETECTED"
+                err_count = val_res.get("error_count", 0)
+                warn_count = val_res.get("warning_count", 0)
+                msgs = val_res.get("messages", [])
+                diag_lines = "\n".join([f"  - Line {m.get('line', 1)} [{m.get('severity', 'error').upper()}]: {m.get('message', '')} (`{m.get('rule_id', '')}`)" for m in msgs[:5]])
+                reply = (
+                    f"### 🔍 Code Diagnostics & Syntax Validation ({tgt_lang.upper()})\n\n"
+                    f"- **Status**: **{status_badge}**\n"
+                    f"- **Errors**: `{err_count}`, **Warnings**: `{warn_count}`\n"
+                    f"{diag_lines if diag_lines else '- No syntax or structural violations found. Code is clean.'}"
+                )
+                return {"success": True, "model": "CircuitForge Syntax Validator", "reply": reply, "tool_history": tool_history, "is_llm": False}
 
         if "simulate" in msg_lower or ("run" in msg_lower and "sim" in msg_lower):
             reply = f"Triggering cycle-accurate digital simulation for **{circuit_name}**. The testbench evaluates signal propagation, transition edges, and assertion vectors over 100ns."

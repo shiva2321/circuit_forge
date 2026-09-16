@@ -38,8 +38,24 @@ import {
   createProjectEntry,
   deleteProjectEntry,
   renameProjectEntry,
+  validateCode,
   FileTreeNode,
 } from '../services/api';
+
+export function getMonacoLanguage(filePath: string): string {
+  const lower = (filePath || '').toLowerCase();
+  if (lower.endsWith('.vhd') || lower.endsWith('.vhdl')) return 'vhdl';
+  if (lower.endsWith('.v') || lower.endsWith('.sv') || lower.endsWith('.vh')) return 'verilog';
+  if (lower.endsWith('.c') || lower.endsWith('.h')) return 'c';
+  if (lower.endsWith('.cpp') || lower.endsWith('.hpp') || lower.endsWith('.cc')) return 'cpp';
+  if (lower.endsWith('.rs')) return 'rust';
+  if (lower.endsWith('.py')) return 'python';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.ini') || lower.endsWith('.toml') || lower.endsWith('.cfg')) return 'ini';
+  if (lower.endsWith('.md')) return 'markdown';
+  if (lower.endsWith('.service') || lower.endsWith('.txt') || lower.endsWith('.sdc') || lower.endsWith('.xdc')) return 'plaintext';
+  return 'plaintext';
+}
 
 export interface FileItem {
   name: string;
@@ -62,6 +78,7 @@ export interface CodeEditorProps {
   isSplitView?: boolean;
   /** Increment this value to force a project tree reload (e.g. after agent materializes new files) */
   reloadVersion?: number;
+  targetOpenFilePath?: string;
 }
 
 const DEFAULT_STARTER_FILES: FileItem[] = [
@@ -303,6 +320,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   syncStatus = 'synced',
   isSplitView = false,
   reloadVersion,
+  targetOpenFilePath,
 }) => {
   // Explorer Sidebar State (compact default if in side-by-side split view)
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => !isSplitView);
@@ -351,12 +369,51 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [toolchainStatus, setToolchainStatus] = useState<any>(null);
 
   const [copied, setCopied] = useState(false);
+  const [internalLintMessages, setInternalLintMessages] = useState<Array<{ line: number; severity: string; message: string; rule_id: string }>>([]);
+  const [isValidatingMultiLang, setIsValidatingMultiLang] = useState<boolean>(false);
   const editorRef = useRef<any>(null);
 
   // Load Toolchain Status on mount
   useEffect(() => {
     getToolchainStatus().then(setToolchainStatus).catch(() => {});
   }, []);
+
+  // Open file by relative path helper
+  const openFileByPath = useCallback(
+    async (targetPath: string) => {
+      const existing = files.find((f) => f.path === targetPath);
+      if (existing) {
+        setActiveFilePath(existing.path);
+        return;
+      }
+      try {
+        const res = await readProjectFile(activeProjectId, targetPath);
+        if (res && res.content !== undefined) {
+          const name = targetPath.split('/').pop() || targetPath;
+          const newFile: FileItem = {
+            name,
+            path: targetPath,
+            code: res.content,
+            isDirty: false,
+          };
+          setFiles((prev) => [...prev, newFile]);
+          setActiveFilePath(targetPath);
+          if (name.endsWith('.vhd')) {
+            onChangeCode(res.content);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to read file from backend:', err);
+      }
+    },
+    [files, activeProjectId, onChangeCode]
+  );
+
+  useEffect(() => {
+    if (targetOpenFilePath) {
+      openFileByPath(targetOpenFilePath);
+    }
+  }, [targetOpenFilePath, openFileByPath]);
 
   // Fetch Tree & Files from Project Manager
   const loadTree = useCallback(
@@ -373,10 +430,17 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           });
           setExpandedFolders(folders);
 
-          // Find first VHDL file or top_file
+          // Find first code file
           const findFirstFile = (nodes: FileTreeNode[]): FileTreeNode | null => {
             for (const n of nodes) {
-              if (!n.is_dir && n.name.endsWith('.vhd')) return n;
+              if (!n.is_dir && (n.name.endsWith('.vhd') || n.name.endsWith('.c') || n.name.endsWith('.py') || n.name.endsWith('.v') || n.name.endsWith('.rs'))) return n;
+              if (n.is_dir && n.children) {
+                const found = findFirstFile(n.children);
+                if (found) return found;
+              }
+            }
+            for (const n of nodes) {
+              if (!n.is_dir) return n;
               if (n.is_dir && n.children) {
                 const found = findFirstFile(n.children);
                 if (found) return found;
@@ -641,13 +705,27 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRunLintClick = () => {
+  const handleRunLintClick = async () => {
     const cur = files.find((f) => f.path === activeFilePath) || files[0];
+    if (!cur) return;
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
-    if (cur.name.endsWith('.vhd')) {
+    const lang = getMonacoLanguage(cur.name);
+
+    if (lang === 'vhdl') {
       onChangeCode(currentCode);
+      onRunLint(currentCode);
+      setInternalLintMessages([]);
+    } else {
+      setIsValidatingMultiLang(true);
+      try {
+        const res = await validateCode({ code: currentCode, language: lang, file_path: cur.path });
+        setInternalLintMessages(res.messages || []);
+      } catch (e) {
+        console.error('Validation failed', e);
+      } finally {
+        setIsValidatingMultiLang(false);
+      }
     }
-    onRunLint(currentCode);
   };
 
   const handleSynthesizeClick = () => {
@@ -763,8 +841,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   };
 
   const activeFile = files.find((f) => f.path === activeFilePath) || files[0];
-  const errorCount = lintMessages.filter((m) => m.severity === 'error').length;
-  const warningCount = lintMessages.filter((m) => m.severity === 'warning').length;
+  const activeLang = getMonacoLanguage(activeFile?.name || '');
+  const isHdl = activeLang === 'vhdl' || activeLang === 'verilog';
+  const activeDiagnostics = internalLintMessages.length > 0 ? internalLintMessages : lintMessages;
+  const errorCount = activeDiagnostics.filter((m) => m.severity === 'error').length;
+  const warningCount = activeDiagnostics.filter((m) => m.severity === 'warning').length;
 
   return (
     <div className="flex flex-col h-full bg-slate-950 text-slate-200 select-none">
@@ -925,23 +1006,25 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
           <button
             onClick={handleRunLintClick}
-            disabled={isLinting}
+            disabled={isLinting || isValidatingMultiLang}
             className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-purple-900/60 hover:bg-purple-800 border border-purple-700 text-purple-200 text-xs font-medium transition disabled:opacity-50 cursor-pointer"
-            title="Run Design Rule Check Linter"
+            title={isHdl ? "Run Design Rule Check Linter" : "Validate Code Syntax & Structure"}
           >
-            {isLinting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isLinting ? 'Linting...' : 'DRC Lint'}</span>
+            {isLinting || isValidatingMultiLang ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isLinting || isValidatingMultiLang ? 'Validating...' : isHdl ? 'DRC Lint' : 'Validate'}</span>
           </button>
 
-          <button
-            onClick={handleSynthesizeClick}
-            disabled={isSynthesizing}
-            className="flex items-center space-x-1 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition disabled:opacity-50 cursor-pointer"
-            title="Synthesize VHDL into Schematic Canvas"
-          >
-            {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-            <span>{isSynthesizing ? 'Synthesizing...' : 'Synthesize'}</span>
-          </button>
+          {isHdl && (
+            <button
+              onClick={handleSynthesizeClick}
+              disabled={isSynthesizing}
+              className="flex items-center space-x-1 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition disabled:opacity-50 cursor-pointer"
+              title="Synthesize RTL into Schematic Canvas"
+            >
+              {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+              <span>{isSynthesizing ? 'Synthesizing...' : 'Synthesize'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1038,7 +1121,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             {/* Bottom Quick Directory Status */}
             <div className="px-3 py-1.5 border-t border-slate-800 bg-slate-950/80 text-[10px] text-slate-500 font-mono flex items-center justify-between">
               <span>{projectTree.length} root items</span>
-              <span className="text-purple-400 font-bold">VHDL-2008</span>
+              <span className="text-purple-400 font-bold">{activeLang.toUpperCase()}</span>
             </div>
           </div>
         )}
@@ -1048,7 +1131,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           <div className="flex-1">
             <Editor
               height="100%"
-              language={activeFile?.name.endsWith('.json') ? 'json' : 'vhdl'}
+              language={activeLang}
               theme="circuitforge-vhdl-dark"
               value={activeFile?.code || ''}
               beforeMount={handleEditorWillMount}
@@ -1071,14 +1154,22 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           </div>
 
           {/* Lint Diagnostics Drawer */}
-          {lintMessages.length > 0 && (
+          {activeDiagnostics.length > 0 && (
             <div className="h-36 border-t border-slate-800 bg-slate-900/95 overflow-y-auto p-3 font-mono text-xs">
-              <div className="font-bold text-slate-300 mb-1.5 text-[11px] flex items-center space-x-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                <span>Static Analysis & Latch Inference Diagnostics ({lintMessages.length})</span>
+              <div className="font-bold text-slate-300 mb-1.5 text-[11px] flex items-center justify-between">
+                <div className="flex items-center space-x-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isHdl ? 'Static Analysis & DRC Diagnostics' : `${activeLang.toUpperCase()} Syntax & Code Diagnostics`} ({activeDiagnostics.length})</span>
+                </div>
+                <button
+                  onClick={() => setInternalLintMessages([])}
+                  className="text-[10px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+                >
+                  Clear
+                </button>
               </div>
               <div className="space-y-1.5">
-                {lintMessages.map((msg, i) => (
+                {activeDiagnostics.map((msg, i) => (
                   <div
                     key={i}
                     className={`p-2 rounded-lg flex items-start space-x-2 text-[11px] ${

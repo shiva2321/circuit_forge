@@ -83,6 +83,16 @@ export function App() {
   const [probeValues, setProbeValues] = useState<Record<string, string>>({});
   const [activeFaults, setActiveFaults] = useState<Record<string, string>>({});
   const [codeEditorReloadVersion, setCodeEditorReloadVersion] = useState<number>(0);
+  const [targetOpenFilePath, setTargetOpenFilePath] = useState<string | undefined>(undefined);
+
+  const handleOpenFileInEditor = (projectId: string, filePath: string) => {
+    setActiveProjectId(projectId);
+    setTargetOpenFilePath(filePath);
+    setActiveTab('design');
+    if (workspaceMode === 'schematic') {
+      setWorkspaceMode('split');
+    }
+  };
 
   // Resizable Sidebar State & Persistence
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -769,6 +779,7 @@ end rtl;`);
               layoutMode={studioLayoutMode}
               onChangeLayoutMode={setStudioLayoutMode}
               codeEditorReloadVersion={codeEditorReloadVersion}
+              targetOpenFilePath={targetOpenFilePath}
             />
           )}
 
@@ -781,11 +792,19 @@ end rtl;`);
           )}
 
           {activeTab === 'lifecycle' && (
-            <TurnkeyLifecycleDeck circuitName={selectedCircuit} projectId={activeProjectId} />
+            <TurnkeyLifecycleDeck
+              circuitName={selectedCircuit}
+              projectId={activeProjectId}
+              onOpenFileInEditor={handleOpenFileInEditor}
+              onSelectProject={handleSelectProject}
+            />
           )}
 
           {activeTab === 'embedded' && (
-            <EmbeddedPlatformsDeck onSelectProject={handleSelectProject} />
+            <EmbeddedPlatformsDeck
+              onSelectProject={handleSelectProject}
+              onOpenFileInEditor={handleOpenFileInEditor}
+            />
           )}
         </div>
 

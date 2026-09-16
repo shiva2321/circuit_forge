@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Editor from '@monaco-editor/react';
 import {
   Cpu,
   Terminal,
@@ -17,20 +18,30 @@ import {
   ChevronRight,
   Shield,
   FileCode,
-  Package
+  Package,
+  Save,
+  CheckCheck,
+  AlertTriangle,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import {
   getPlatformsCatalog,
   generatePlatformCode,
-  scaffoldPlatformProject
+  scaffoldPlatformProject,
+  writeProjectFile,
+  validateCode,
 } from '../services/api';
+import { getMonacoLanguage } from './CodeEditor';
 
 export interface EmbeddedPlatformsDeckProps {
   onSelectProject?: (projectId: string) => void;
+  onOpenFileInEditor?: (projectId: string, filePath: string) => void;
 }
 
 export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
   onSelectProject,
+  onOpenFileInEditor,
 }) => {
   const [catalog, setCatalog] = useState<any>(null);
   const [selectedPlatformId, setSelectedPlatformId] = useState<string>('esp32_s3');
@@ -38,6 +49,13 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
   const [projectName, setProjectName] = useState<string>('iot_sensor_gateway');
   const [generatedData, setGeneratedData] = useState<any>(null);
   const [selectedFile, setSelectedFile] = useState<string>('');
+  const [fileContent, setFileContent] = useState<string>('');
+  const [isDirty, setIsDirty] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState<boolean>(false);
+  const [validationResult, setValidationResult] = useState<any>(null);
+  const [lastScaffoldedId, setLastScaffoldedId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [scaffolding, setScaffolding] = useState<boolean>(false);
   const [scaffoldResult, setScaffoldResult] = useState<string | null>(null);
@@ -81,6 +99,17 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (!generatedData || !selectedFile) return;
+    const content =
+      generatedData.source_files?.[selectedFile] ||
+      generatedData.manifest_files?.[selectedFile] ||
+      '';
+    setFileContent(content);
+    setIsDirty(false);
+    setValidationResult(null);
+  }, [selectedFile, generatedData]);
+
   const handleScaffold = async () => {
     setScaffolding(true);
     try {
@@ -91,6 +120,7 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
         description: `Generated ${selectedPlatformId} project in ${selectedLanguage.toUpperCase()}`,
       });
       if (res && res.id) {
+        setLastScaffoldedId(res.id);
         setScaffoldResult(`Scaffolded project '${res.id}' with ${res.file_count} files into workspace!`);
         if (onSelectProject) {
           onSelectProject(res.id);
@@ -103,13 +133,50 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
     }
   };
 
+  const handleSaveFileToWorkspace = async () => {
+    const targetProj = lastScaffoldedId || projectName;
+    setIsSaving(true);
+    try {
+      await writeProjectFile(targetProj, selectedFile, fileContent);
+      setIsDirty(false);
+      setSaveNotice(`Saved ${selectedFile} to ${targetProj}`);
+      setTimeout(() => setSaveNotice(null), 2500);
+    } catch (e) {
+      console.error('Failed to save file to project', e);
+      setSaveNotice(`Save failed`);
+      setTimeout(() => setSaveNotice(null), 2500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleValidateCode = async () => {
+    setIsValidating(true);
+    try {
+      const res = await validateCode({
+        code: fileContent,
+        language: getMonacoLanguage(selectedFile),
+        file_path: selectedFile,
+      });
+      setValidationResult(res);
+    } catch (e) {
+      console.error('Validation error', e);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const handleOpenInIDE = () => {
+    const targetProj = lastScaffoldedId || projectName;
+    if (onOpenFileInEditor) {
+      onOpenFileInEditor(targetProj, selectedFile);
+    } else if (onSelectProject) {
+      onSelectProject(targetProj);
+    }
+  };
+
   const handleCopyCode = () => {
-    if (!generatedData) return;
-    const content =
-      generatedData.source_files?.[selectedFile] ||
-      generatedData.manifest_files?.[selectedFile] ||
-      '';
-    navigator.clipboard.writeText(content);
+    navigator.clipboard.writeText(fileContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -275,9 +342,20 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
         )}
 
         {scaffoldResult && (
-          <div className="p-3 bg-emerald-950/70 border border-emerald-700 rounded-lg text-xs font-mono text-emerald-300 flex items-center space-x-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>{scaffoldResult}</span>
+          <div className="p-3 bg-emerald-950/70 border border-emerald-700 rounded-lg text-xs font-mono text-emerald-300 flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{scaffoldResult}</span>
+            </div>
+            {lastScaffoldedId && (
+              <button
+                onClick={handleOpenInIDE}
+                className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-sans font-medium transition cursor-pointer"
+              >
+                <Code className="w-3.5 h-3.5" />
+                <span>Open in Code Studio IDE</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -376,24 +454,122 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
                         <FileCode className="w-3 h-3 text-cyan-400" />
                       )}
                       <span>{file.name}</span>
+                      {isSelected && isDirty && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" title="Unsaved changes" />
+                      )}
                     </button>
                   );
                 })}
               </div>
 
-              {/* Copy Code */}
-              <button
-                onClick={handleCopyCode}
-                className="flex items-center space-x-1 text-xs font-mono text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 cursor-pointer transition shrink-0 ml-2"
-              >
-                <Copy className="w-3 h-3" />
-                <span>{copied ? 'Copied!' : 'Copy'}</span>
-              </button>
+              {/* Action Buttons */}
+              <div className="flex items-center space-x-1.5 shrink-0 ml-2">
+                {/* Validate button */}
+                <button
+                  onClick={handleValidateCode}
+                  disabled={isValidating || !fileContent}
+                  className="flex items-center space-x-1 text-xs font-mono text-cyan-300 hover:text-white px-2 py-1 rounded bg-cyan-950/60 border border-cyan-800/80 hover:bg-cyan-900/80 cursor-pointer transition disabled:opacity-50"
+                  title="Validate code syntax"
+                >
+                  {isValidating ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCheck className="w-3 h-3" />}
+                  <span>{isValidating ? 'Validating...' : 'Validate'}</span>
+                </button>
+
+                {/* Save to Project */}
+                <button
+                  onClick={handleSaveFileToWorkspace}
+                  disabled={isSaving || !fileContent}
+                  className={`flex items-center space-x-1 text-xs font-mono px-2 py-1 rounded border cursor-pointer transition disabled:opacity-50 ${
+                    isDirty
+                      ? 'bg-amber-600/30 text-amber-300 border-amber-500/80 hover:bg-amber-600/50'
+                      : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title="Save current file to project workspace"
+                >
+                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  <span>{isSaving ? 'Saving...' : isDirty ? 'Save *' : 'Save'}</span>
+                </button>
+
+                {/* Open in Code Studio IDE */}
+                <button
+                  onClick={handleOpenInIDE}
+                  className="flex items-center space-x-1 text-xs font-mono text-purple-300 hover:text-white px-2 py-1 rounded bg-purple-950/60 border border-purple-800/80 hover:bg-purple-900/80 cursor-pointer transition"
+                  title="Open this file in the full Code Studio IDE"
+                >
+                  <Code className="w-3 h-3" />
+                  <span>Open in IDE</span>
+                </button>
+
+                {/* Copy Code */}
+                <button
+                  onClick={handleCopyCode}
+                  className="flex items-center space-x-1 text-xs font-mono text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 cursor-pointer transition"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copied ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
             </div>
 
-            {/* Code Content */}
-            <div className="flex-1 bg-slate-950 p-4 font-mono text-xs text-slate-200 overflow-auto">
-              <pre className="whitespace-pre">{currentCode}</pre>
+            {/* Save Notice */}
+            {saveNotice && (
+              <div className="px-3 py-1 bg-emerald-950/80 border-b border-emerald-800/80 text-[11px] font-mono text-emerald-300 flex items-center space-x-1.5">
+                <Check className="w-3 h-3 text-emerald-400" />
+                <span>{saveNotice}</span>
+              </div>
+            )}
+
+            {/* Validation Banner */}
+            {validationResult && (
+              <div
+                className={`px-3 py-1.5 border-b text-[11px] font-mono flex items-center justify-between ${
+                  validationResult.success
+                    ? 'bg-emerald-950/70 border-emerald-800/80 text-emerald-300'
+                    : 'bg-rose-950/70 border-rose-800/80 text-rose-300'
+                }`}
+              >
+                <div className="flex items-center space-x-2 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {validationResult.success ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  )}
+                  <span>
+                    [{validationResult.language?.toUpperCase()}] {validationResult.message}
+                    {validationResult.error_count > 0 && ` (${validationResult.error_count} error(s))`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setValidationResult(null)}
+                  className="text-slate-400 hover:text-white text-xs ml-2 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Code Content in Monaco Editor */}
+            <div className="flex-1 bg-slate-950 overflow-hidden min-h-[420px]">
+              <Editor
+                height="100%"
+                language={getMonacoLanguage(selectedFile)}
+                value={fileContent}
+                theme="vs-dark"
+                onChange={(val) => {
+                  setFileContent(val || '');
+                  setIsDirty(true);
+                }}
+                options={{
+                  fontSize: 12,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  automaticLayout: true,
+                  lineNumbers: 'on',
+                  renderWhitespace: 'selection',
+                }}
+              />
             </div>
           </div>
         </div>

@@ -90,6 +90,8 @@ export interface StudioWindowManagerProps {
   onChangeLayoutMode: (mode: StudioLayoutMode) => void;
   /** Increment to force CodeEditor file tree reload after agent materializes files */
   codeEditorReloadVersion?: number;
+  /** Path of file to automatically focus and open in CodeEditor */
+  targetOpenFilePath?: string;
 }
 
 const MIN_WINDOW_WIDTH = 340;
@@ -138,6 +140,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   layoutMode,
   onChangeLayoutMode,
   codeEditorReloadVersion,
+  targetOpenFilePath,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [topZ, setTopZ] = useState<number>(10);
@@ -643,6 +646,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             syncStatus={syncStatus}
             isSplitView={layoutMode === 'split'}
             reloadVersion={codeEditorReloadVersion}
+            targetOpenFilePath={targetOpenFilePath}
           />
         );
       case 'waveform':

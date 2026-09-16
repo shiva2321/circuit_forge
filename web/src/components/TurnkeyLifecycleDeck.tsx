@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Editor from '@monaco-editor/react';
 import {
   Brain,
   Factory,
@@ -21,19 +22,30 @@ import {
   Sparkles,
   ArrowRightLeft,
   ChevronRight,
-  Info
+  Info,
+  Save,
+  FileCode,
+  Package,
+  CheckCheck,
+  Loader2,
+  Check,
+  FolderTree,
 } from 'lucide-react';
 import {
   runMultiphysicsSimulation,
   runDfmStackupAudit,
   runQaInspection,
   runFirmwareSecurity,
-  runSupplyChainLifecycle
+  runSupplyChainLifecycle,
+  exportLifecycleArtifact,
+  validateCode,
 } from '../services/api';
 
 export interface TurnkeyLifecycleDeckProps {
   circuitName?: string;
   projectId?: string;
+  onOpenFileInEditor?: (projectId: string, filePath: string) => void;
+  onSelectProject?: (projectId: string) => void;
 }
 
 type PillarTab = 'multiphysics' | 'forging' | 'qa' | 'firmware' | 'supply_chain';
@@ -41,6 +53,8 @@ type PillarTab = 'multiphysics' | 'forging' | 'qa' | 'firmware' | 'supply_chain'
 export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
   circuitName = 'CircuitForge_Enterprise_SoC',
   projectId,
+  onOpenFileInEditor,
+  onSelectProject,
 }) => {
   const [activeTab, setActiveTab] = useState<PillarTab>('multiphysics');
   const [loading, setLoading] = useState<boolean>(false);
@@ -76,6 +90,124 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
   const [targetVolume, setTargetVolume] = useState<number>(1000);
   const [supplyChainData, setSupplyChainData] = useState<any>(null);
   const [substitutionNotice, setSubstitutionNotice] = useState<string | null>(null);
+
+  // Unified Lifecycle Artifacts & Firmware Editing State
+  const [fwCode, setFwCode] = useState<string>('');
+  const [isFwDirty, setIsFwDirty] = useState<boolean>(false);
+  const [isFwSaving, setIsFwSaving] = useState<boolean>(false);
+  const [fwSaveNotice, setFwSaveNotice] = useState<string | null>(null);
+  const [isFwValidating, setIsFwValidating] = useState<boolean>(false);
+  const [fwValidationResult, setFwValidationResult] = useState<any>(null);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!firmwareData) return;
+    const code =
+      activeFwTab === 'c_hal'
+        ? firmwareData.firmware?.c_hal_driver || ''
+        : activeFwTab === 'rust_pac'
+        ? firmwareData.firmware?.embedded_rust_pac || ''
+        : activeFwTab === 'rtos'
+        ? firmwareData.firmware?.rtos_task_template || ''
+        : JSON.stringify(firmwareData.security || {}, null, 2);
+    setFwCode(code);
+    setIsFwDirty(false);
+    setFwValidationResult(null);
+  }, [firmwareData, activeFwTab]);
+
+  const getFwLanguage = (tab: string) => {
+    if (tab === 'c_hal' || tab === 'rtos') return 'c';
+    if (tab === 'rust_pac') return 'rust';
+    if (tab === 'security') return 'json';
+    return 'plaintext';
+  };
+
+  const getFwFilePath = (tab: string) => {
+    const slug = circuitName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (tab === 'c_hal') return `firmware/${slug}_hal.c`;
+    if (tab === 'rust_pac') return `firmware/src/${slug}_pac.rs`;
+    if (tab === 'rtos') return `firmware/${slug}_rtos_task.c`;
+    return `security/root_of_trust_manifest.json`;
+  };
+
+  const handleValidateFirmware = async () => {
+    setIsFwValidating(true);
+    try {
+      const res = await validateCode({
+        code: fwCode,
+        language: getFwLanguage(activeFwTab),
+        file_path: getFwFilePath(activeFwTab),
+      });
+      setFwValidationResult(res);
+    } catch (e) {
+      console.error('Firmware validation failed', e);
+    } finally {
+      setIsFwValidating(false);
+    }
+  };
+
+  const handleSaveFirmwareToProject = async () => {
+    const targetProj = projectId || 'current';
+    setIsFwSaving(true);
+    try {
+      const res = await exportLifecycleArtifact({
+        project_id: targetProj,
+        artifact_type: activeFwTab,
+        circuit_name: circuitName,
+        payload: activeFwTab === 'security' ? undefined : fwCode,
+      });
+      if (res && res.success) {
+        setIsFwDirty(false);
+        const files = Object.keys(res.exported_files || {}).join(', ');
+        setFwSaveNotice(res.message || `Saved to workspace: ${files}`);
+        setTimeout(() => setFwSaveNotice(null), 3500);
+      }
+    } catch (e) {
+      console.error('Failed to export firmware', e);
+      setFwSaveNotice('Export failed');
+      setTimeout(() => setFwSaveNotice(null), 3000);
+    } finally {
+      setIsFwSaving(false);
+    }
+  };
+
+  const handleOpenFwInEditor = () => {
+    const targetProj = projectId || 'current';
+    const filePath = getFwFilePath(activeFwTab);
+    if (onOpenFileInEditor) {
+      onOpenFileInEditor(targetProj, filePath);
+    } else if (onSelectProject) {
+      onSelectProject(targetProj);
+    }
+  };
+
+  const handleExportArtifact = async (artifactType: string, payload?: any) => {
+    const targetProj = projectId || 'current';
+    setIsExporting(true);
+    try {
+      const res = await exportLifecycleArtifact({
+        project_id: targetProj,
+        artifact_type: artifactType,
+        circuit_name: circuitName,
+        payload: payload,
+      });
+      if (res && res.success) {
+        const files = Object.keys(res.exported_files || {}).join(', ');
+        setExportNotice(res.message || `Exported ${artifactType}: ${files}`);
+        setTimeout(() => setExportNotice(null), 3500);
+        if (onSelectProject) {
+          onSelectProject(targetProj);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to export artifact', e);
+      setExportNotice('Export failed');
+      setTimeout(() => setExportNotice(null), 3000);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // Auto-run active tab data on initial mount or tab change if null
   useEffect(() => {
@@ -287,8 +419,44 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
           </button>
         </div>
 
-        {/* Global Action Refresh */}
+        {/* Global Action Refresh & Artifact Materialization */}
         <div className="flex items-center space-x-2">
+          {activeTab === 'multiphysics' && multiphysicsData && (
+            <button
+              onClick={() => handleExportArtifact('multiphysics', multiphysicsData)}
+              disabled={isExporting}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-950/60 border border-blue-800 hover:bg-blue-900/60 text-blue-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
+              title="Export physical report to project workspace (reports/multiphysics.json)"
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              <span>Export Report</span>
+            </button>
+          )}
+
+          {activeTab === 'forging' && forgingData && (
+            <button
+              onClick={() => handleExportArtifact('dfm_stackup', forgingData.stackup)}
+              disabled={isExporting}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-amber-950/60 border border-amber-800 hover:bg-amber-900/60 text-amber-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
+              title="Save stackup constraints to project workspace (constraints/stackup.json)"
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
+              <span>Save Stackup</span>
+            </button>
+          )}
+
+          {activeTab === 'supply_chain' && supplyChainData && (
+            <button
+              onClick={() => handleExportArtifact('bom', supplyChainData)}
+              disabled={isExporting}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800 hover:bg-emerald-900/60 text-emerald-300 text-xs font-medium cursor-pointer transition disabled:opacity-50"
+              title="Save BOM to project workspace (bom.json)"
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
+              <span>Save BOM</span>
+            </button>
+          )}
+
           <button
             onClick={() => {
               if (activeTab === 'multiphysics') handleRunMultiphysics();
@@ -305,6 +473,22 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Artifact Export Notice Banner */}
+      {exportNotice && (
+        <div className="bg-emerald-950/80 border-b border-emerald-800 px-5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{exportNotice}</span>
+          </div>
+          <button
+            onClick={() => setExportNotice(null)}
+            className="text-slate-400 hover:text-white text-xs cursor-pointer ml-3"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Main Deck Body */}
       <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -942,9 +1126,9 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
                   </button>
                 </div>
 
-                {/* Firmware Code Viewers with Sub-tabs */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 py-2">
+                {/* Firmware Code Viewers with Sub-tabs & Monaco Editor */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+                  <div className="flex flex-wrap items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 py-2 gap-2">
                     <div className="flex space-x-1">
                       <button
                         onClick={() => setActiveFwTab('c_hal')}
@@ -970,31 +1154,122 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
                       >
                         FreeRTOS Priority Task
                       </button>
+                      <button
+                        onClick={() => setActiveFwTab('security')}
+                        className={`px-3 py-1 text-xs font-mono rounded transition cursor-pointer ${
+                          activeFwTab === 'security' ? 'bg-pink-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        RoT Manifest (.json)
+                      </button>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        const code =
-                          activeFwTab === 'c_hal'
-                            ? firmwareData.firmware?.c_hal_driver
-                            : activeFwTab === 'rust_pac'
-                            ? firmwareData.firmware?.embedded_rust_pac
-                            : firmwareData.firmware?.rtos_task_template;
-                        copyToClipboard(code, 'fw_code');
-                      }}
-                      className="flex items-center space-x-1 text-xs text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>{copiedCode === 'fw_code' ? 'Copied!' : 'Copy Code'}</span>
-                    </button>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      {/* Validate Button */}
+                      <button
+                        onClick={handleValidateFirmware}
+                        disabled={isFwValidating || !fwCode}
+                        className="flex items-center space-x-1 text-xs font-mono text-cyan-300 hover:text-white px-2.5 py-1 rounded bg-cyan-950/60 border border-cyan-800/80 hover:bg-cyan-900/80 cursor-pointer transition disabled:opacity-50"
+                        title="Validate code syntax"
+                      >
+                        {isFwValidating ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCheck className="w-3 h-3" />}
+                        <span>{isFwValidating ? 'Validating...' : 'Validate'}</span>
+                      </button>
+
+                      {/* Save to Project Workspace */}
+                      <button
+                        onClick={handleSaveFirmwareToProject}
+                        disabled={isFwSaving || !fwCode}
+                        className={`flex items-center space-x-1 text-xs font-mono px-2.5 py-1 rounded border cursor-pointer transition disabled:opacity-50 ${
+                          isFwDirty
+                            ? 'bg-amber-600/30 text-amber-300 border-amber-500/80 hover:bg-amber-600/50'
+                            : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700'
+                        }`}
+                        title="Save current file into project workspace"
+                      >
+                        {isFwSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        <span>{isFwSaving ? 'Saving...' : isFwDirty ? 'Save to Workspace *' : 'Save to Workspace'}</span>
+                      </button>
+
+                      {/* Open in Code Editor */}
+                      <button
+                        onClick={handleOpenFwInEditor}
+                        className="flex items-center space-x-1 text-xs font-mono text-purple-300 hover:text-white px-2.5 py-1 rounded bg-purple-950/60 border border-purple-800/80 hover:bg-purple-900/80 cursor-pointer transition"
+                        title="Open in Code Studio IDE"
+                      >
+                        <FileCode className="w-3 h-3" />
+                        <span>Open in Editor</span>
+                      </button>
+
+                      {/* Copy */}
+                      <button
+                        onClick={() => copyToClipboard(fwCode, 'fw_code')}
+                        className="flex items-center space-x-1 text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 cursor-pointer transition"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>{copiedCode === 'fw_code' ? 'Copied!' : 'Copy'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-4 bg-slate-950 font-mono text-xs text-slate-200 overflow-x-auto max-h-80">
-                    <pre>
-                      {activeFwTab === 'c_hal' && firmwareData.firmware?.c_hal_driver}
-                      {activeFwTab === 'rust_pac' && firmwareData.firmware?.embedded_rust_pac}
-                      {activeFwTab === 'rtos' && firmwareData.firmware?.rtos_task_template}
-                    </pre>
+                  {/* Save Notice */}
+                  {fwSaveNotice && (
+                    <div className="px-4 py-1.5 bg-emerald-950/80 border-b border-emerald-800 text-[11px] font-mono text-emerald-300 flex items-center space-x-1.5">
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span>{fwSaveNotice}</span>
+                    </div>
+                  )}
+
+                  {/* Validation Diagnostics */}
+                  {fwValidationResult && (
+                    <div
+                      className={`px-4 py-1.5 border-b text-[11px] font-mono flex items-center justify-between ${
+                        fwValidationResult.success
+                          ? 'bg-emerald-950/70 border-emerald-800/80 text-emerald-300'
+                          : 'bg-rose-950/70 border-rose-800/80 text-rose-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        {fwValidationResult.success ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                        )}
+                        <span>
+                          [{fwValidationResult.language?.toUpperCase()}] {fwValidationResult.message}
+                          {fwValidationResult.error_count > 0 && ` (${fwValidationResult.error_count} error(s))`}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setFwValidationResult(null)}
+                        className="text-slate-400 hover:text-white text-xs ml-2 cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Monaco Editor Container */}
+                  <div className="min-h-[380px] h-[380px] bg-slate-950 overflow-hidden">
+                    <Editor
+                      height="100%"
+                      language={getFwLanguage(activeFwTab)}
+                      value={fwCode}
+                      theme="vs-dark"
+                      onChange={(val) => {
+                        setFwCode(val || '');
+                        setIsFwDirty(true);
+                      }}
+                      options={{
+                        fontSize: 12,
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: 'on',
+                        automaticLayout: true,
+                        lineNumbers: 'on',
+                      }}
+                    />
                   </div>
                 </div>
               </div>

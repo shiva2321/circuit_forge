@@ -8,6 +8,7 @@ import os
 import time
 import json
 import re
+import ast
 from typing import Dict, List, Any, Optional
 from backend.app.engine.simulator import Simulator
 from backend.app.engine.netlist import NetlistCatalog, NetlistGraph
@@ -961,7 +962,7 @@ end rtl;"""
 
         for root, _, files in os.walk(proj_dir):
             for f in files:
-                if f.endswith((".vhd", ".md", ".json", ".sdc", ".txt")):
+                if f.endswith((".vhd", ".vhdl", ".v", ".sv", ".c", ".h", ".cpp", ".hpp", ".rs", ".py", ".md", ".json", ".sdc", ".txt", ".ini", ".toml", ".service", ".pio", "CMakeLists.txt", "Makefile")):
                     full = os.path.join(root, f)
                     rel = os.path.relpath(full, proj_dir).replace("\\", "/")
                     try:
@@ -1157,6 +1158,236 @@ end rtl;"""
             gen["written_to_project"] = p_id
 
         return gen
+
+    def eda_validate_code(
+        self,
+        code: str,
+        language: str = "vhdl",
+        file_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Validates syntax and static structure across VHDL, Verilog, C/C++, Rust, Python, and JSON.
+        Returns line-level diagnostic messages with severity, message, and rule identifiers.
+        """
+        lang = (language or "vhdl").lower().strip()
+        messages = []
+        is_valid = True
+
+        # Infer language from file extension if not specified or generic
+        if file_path:
+            fp = file_path.lower()
+            if fp.endswith((".vhd", ".vhdl")):
+                lang = "vhdl"
+            elif fp.endswith((".v", ".sv", ".vh")):
+                lang = "verilog"
+            elif fp.endswith((".c", ".h")):
+                lang = "c"
+            elif fp.endswith((".cpp", ".hpp", ".cc")):
+                lang = "cpp"
+            elif fp.endswith(".rs"):
+                lang = "rust"
+            elif fp.endswith(".py"):
+                lang = "python"
+            elif fp.endswith(".json"):
+                lang = "json"
+
+        if lang in ("vhdl",):
+            res = VHDLParser.parse_code(code)
+            is_valid = res.is_valid
+            messages = [m.__dict__ for m in res.lint_messages]
+
+        elif lang in ("python", "py"):
+            try:
+                ast.parse(code)
+                is_valid = True
+            except SyntaxError as se:
+                is_valid = False
+                messages.append({
+                    "line": se.lineno or 1,
+                    "severity": "error",
+                    "message": f"SyntaxError: {se.msg}",
+                    "rule_id": "PY_SYNTAX_ERR"
+                })
+
+        elif lang in ("json",):
+            try:
+                json.loads(code)
+                is_valid = True
+            except json.JSONDecodeError as jde:
+                is_valid = False
+                messages.append({
+                    "line": jde.lineno,
+                    "severity": "error",
+                    "message": f"JSONDecodeError: {jde.msg}",
+                    "rule_id": "JSON_SYNTAX_ERR"
+                })
+
+        elif lang in ("verilog", "systemverilog", "v", "sv"):
+            # Check basic Verilog/SystemVerilog structural invariants
+            module_defs = len(re.findall(r'\bmodule\s+[a-zA-Z0-9_]+', code))
+            endmodule_defs = len(re.findall(r'\bendmodule\b', code))
+            if module_defs != endmodule_defs:
+                is_valid = False
+                messages.append({
+                    "line": 1,
+                    "severity": "error",
+                    "message": f"Mismatched module / endmodule count (found {module_defs} modules, {endmodule_defs} endmodule).",
+                    "rule_id": "VERILOG_UNCLOSED_MODULE"
+                })
+            # Check bracket balance
+            open_curlies = code.count('{')
+            close_curlies = code.count('}')
+            if open_curlies != close_curlies:
+                is_valid = False
+                messages.append({
+                    "line": 1,
+                    "severity": "warning",
+                    "message": f"Unbalanced braces in Verilog: {open_curlies} '{{' vs {close_curlies} '}}'",
+                    "rule_id": "VERILOG_BRACE_MISMATCH"
+                })
+
+        elif lang in ("c", "cpp", "c_cpp", "rust"):
+            # Check basic C/C++/Rust brace and parenthesis matching
+            lines = code.splitlines()
+            open_curlies = code.count('{')
+            close_curlies = code.count('}')
+            if open_curlies != close_curlies:
+                is_valid = False
+                messages.append({
+                    "line": len(lines),
+                    "severity": "error",
+                    "message": f"Unbalanced braces in {lang.upper()}: {open_curlies} '{{' vs {close_curlies} '}}'",
+                    "rule_id": "BRACE_MISMATCH"
+                })
+            open_parens = code.count('(')
+            close_parens = code.count(')')
+            if open_parens != close_parens:
+                is_valid = False
+                messages.append({
+                    "line": len(lines),
+                    "severity": "warning",
+                    "message": f"Unbalanced parentheses in {lang.upper()}: {open_parens} '(' vs {close_parens} ')'",
+                    "rule_id": "PAREN_MISMATCH"
+                })
+
+        return {
+            "success": True,
+            "language": lang,
+            "is_valid": is_valid,
+            "error_count": len([m for m in messages if m.get("severity") == "error"]),
+            "warning_count": len([m for m in messages if m.get("severity") == "warning"]),
+            "messages": messages
+        }
+
+    def eda_export_lifecycle_artifact(
+        self,
+        project_id: str,
+        artifact_type: str,
+        circuit_name: str = "CircuitForge_System",
+        payload: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Exports and materializes turnkey lifecycle engineering artifacts (firmware drivers,
+        Rust PAC, FreeRTOS tasks, Security manifests, BOMs, Stackups, Multiphysics reports)
+        directly into the active project workspace.
+        """
+        art_type = artifact_type.lower().strip()
+        custom_content = None
+        p: Dict[str, Any] = {}
+        if isinstance(payload, str):
+            custom_content = payload
+        elif isinstance(payload, dict):
+            p = payload
+            if "code" in p:
+                custom_content = p["code"]
+
+        exported_files = {}
+
+        if art_type in ("c_hal", "c_driver"):
+            if custom_content:
+                content = custom_content
+            else:
+                fw = firmware_security_engine.generate_firmware_suite(circuit_name)
+                content = fw["c_hal_driver"]
+            path = p.get("path", "main/app_main.c")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("rust_pac", "rust"):
+            if custom_content:
+                content = custom_content
+            else:
+                fw = firmware_security_engine.generate_firmware_suite(circuit_name)
+                content = fw["embedded_rust_pac"]
+            path = p.get("path", "src/pac.rs")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("rtos_task", "freertos", "rtos"):
+            if custom_content:
+                content = custom_content
+            else:
+                fw = firmware_security_engine.generate_firmware_suite(circuit_name)
+                content = fw["rtos_task_template"]
+            path = p.get("path", "main/rtos_task.c")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("security_manifest", "root_of_trust", "security"):
+            if custom_content:
+                content = custom_content
+            else:
+                rot = firmware_security_engine.provision_hardware_root_of_trust(circuit_name)
+                content = json.dumps(rot, indent=2)
+            path = p.get("path", "security/manifest.json")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("bom", "supply_chain"):
+            if custom_content:
+                content = custom_content
+            else:
+                vol = int(p.get("target_volume", 1000))
+                bom_data = supply_chain_engine.generate_project_bom(circuit_name, target_volume=vol)
+                content = json.dumps(bom_data, indent=2)
+            path = p.get("path", "bom.json")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("dfm_stackup", "stackup"):
+            if custom_content:
+                content = custom_content
+            else:
+                layers = int(p.get("layer_count", 8))
+                family = p.get("substrate_family", "Rogers_RO4350B")
+                stack = forging_engine.design_layer_stackup(layers, family)
+                content = json.dumps(stack, indent=2)
+            path = p.get("path", "constraints/stackup.json")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        elif art_type in ("multiphysics", "multiphysics_report"):
+            if custom_content:
+                content = custom_content
+            else:
+                mp = multiphysics_engine.run_multiphysics_co_simulation(circuit_name)
+                content = json.dumps(mp, indent=2)
+            path = p.get("path", "reports/multiphysics.json")
+            res = self.fs_write_file(project_id, path, content)
+            exported_files[path] = res
+
+        else:
+            return {"success": False, "error": f"Unknown artifact type: {artifact_type}"}
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "artifact_type": art_type,
+            "circuit_name": circuit_name,
+            "exported_files": exported_files,
+            "message": f"Successfully exported {art_type} into project '{project_id}'."
+        }
+
 
     # ── Universal Tool Calling Schemas & Execution Dispatcher ─────────────────
 
@@ -1446,6 +1677,39 @@ end rtl;"""
                         "required": ["platform_id", "target_language"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_validate_code",
+                    "description": "Validates syntax and structural integrity of code across VHDL, Verilog, C, C++, Rust, Python, and JSON.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string", "description": "Source code text to validate."},
+                            "language": {"type": "string", "description": "Target language: 'vhdl', 'verilog', 'c', 'cpp', 'rust', 'python', 'json'."},
+                            "file_path": {"type": "string", "description": "Optional file path (e.g. 'main/app_main.c')."}
+                        },
+                        "required": ["code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "eda_export_lifecycle_artifact",
+                    "description": "Materializes turnkey lifecycle engineering artifacts (c_hal, rust_pac, rtos_task, security_manifest, bom, dfm_stackup, multiphysics) directly into project workspace files.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Target workspace project identifier."},
+                            "artifact_type": {"type": "string", "description": "Type: 'c_hal', 'rust_pac', 'rtos_task', 'security_manifest', 'bom', 'dfm_stackup', 'multiphysics'."},
+                            "circuit_name": {"type": "string", "description": "Circuit identifier."},
+                            "payload": {"type": "object", "description": "Optional custom export parameters."}
+                        },
+                        "required": ["project_id", "artifact_type"]
+                    }
+                }
             }
         ]
 
@@ -1594,11 +1858,24 @@ end rtl;"""
                     write_to_workspace=bool(args.get("write_to_workspace", False)),
                     project_id=p_id
                 )
+            elif tool_name == "eda_validate_code":
+                res = self.eda_validate_code(
+                    code=args.get("code") or args.get("content") or args.get("vhdl_code") or "",
+                    language=args.get("language", "vhdl"),
+                    file_path=args.get("path") or args.get("file_path")
+                )
+            elif tool_name == "eda_export_lifecycle_artifact":
+                res = self.eda_export_lifecycle_artifact(
+                    project_id=p_id,
+                    artifact_type=args.get("artifact_type", "bom"),
+                    circuit_name=args.get("circuit_name", "CircuitForge_System"),
+                    payload=args.get("payload") or args
+                )
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
             # Proactively broadcast project_files_updated on successful filesystem changes
-            if tool_name in ("fs_write_file", "fs_edit_file", "fs_delete_file") and res.get("success"):
+            if tool_name in ("fs_write_file", "fs_edit_file", "fs_delete_file", "eda_export_lifecycle_artifact") and res.get("success"):
                 try:
                     import asyncio
                     loop = asyncio.get_running_loop()

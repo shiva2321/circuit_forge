@@ -163,6 +163,29 @@ const getPinLocalPos = (node: NetlistNode, isInput: boolean, pinIndex: number, t
   return { x, y };
 };
 
+// Dynamic layout helpers for primary inputs and outputs ensuring zero spillover and exact wire terminal alignment
+export const getPrimaryInputLayout = (pin: { name: string; width?: number }, value?: string) => {
+  const displayVal = formatLogicValue(value || '0', pin.width || 1);
+  const nameLen = pin.name.length;
+  const isBus = (pin.width || 1) > 1;
+  const labelWidth = Math.max(32, nameLen * 7.5 + (isBus ? 32 : 0));
+  const buttonX = 42 + labelWidth + 8;
+  const pillWidth = Math.max(36, displayVal.length * 8.5 + 16);
+  const chassisWidth = buttonX + pillWidth + 16;
+  return { displayVal, labelWidth, buttonX, pillWidth, chassisWidth, isBus };
+};
+
+export const getPrimaryOutputLayout = (pin: { name: string; width?: number }, value?: string) => {
+  const displayVal = formatLogicValue(value || '0', pin.width || 1);
+  const nameLen = pin.name.length;
+  const isBus = (pin.width || 1) > 1;
+  const labelWidth = Math.max(32, nameLen * 7.5 + (isBus ? 32 : 0));
+  const buttonX = 42 + labelWidth + 8;
+  const pillWidth = Math.max(36, displayVal.length * 8.5 + 16);
+  const chassisWidth = buttonX + pillWidth + 14;
+  return { displayVal, labelWidth, buttonX, pillWidth, chassisWidth, isBus };
+};
+
 interface WiringStartPin {
   nodeId: string;
   portName: string;
@@ -1601,7 +1624,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           const inIdx = netlist.primary_inputs.indexOf(inPin);
           const defaultPos = { x: 40, y: 80 + inIdx * 70 };
           const pos = nodePositions[inPin.id] || nodePositions[inPin.name] || defaultPos;
-          x1 = pos.x + 130;
+          const rawVal = probeValues[inPin.name] ?? probeValues[inPin.id] ?? '0';
+          const { chassisWidth } = getPrimaryInputLayout(inPin, rawVal);
+          x1 = pos.x + chassisWidth;
           y1 = pos.y + 19;
         }
       }
@@ -2134,10 +2159,11 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     const fillClass = isSelected ? 'fill-cyan-950/80' : 'fill-slate-900/90';
 
     if (gateType === 'AND') {
+      const straightLen = Math.max(20, w - h / 2);
       return (
         <g>
           <path
-            d={`M 0 0 L ${w * 0.55} 0 A ${h / 2} ${h / 2} 0 0 1 ${w * 0.55} ${h} L 0 ${h} Z`}
+            d={`M 0 0 L ${straightLen} 0 A ${h / 2} ${h / 2} 0 0 1 ${straightLen} ${h} L 0 ${h} Z`}
             fill={fillVal}
             stroke={strokeVal}
             strokeWidth={strokeWidthVal}
@@ -2160,17 +2186,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     }
 
     if (gateType === 'NAND') {
+      const gw = w - 10;
+      const straightLen = Math.max(20, gw - h / 2);
       return (
         <g>
           <path
-            d={`M 0 0 L ${w * 0.5} 0 A ${h / 2} ${h / 2} 0 0 1 ${w * 0.5} ${h} L 0 ${h} Z`}
+            d={`M 0 0 L ${straightLen} 0 A ${h / 2} ${h / 2} 0 0 1 ${straightLen} ${h} L 0 ${h} Z`}
             fill={fillVal}
             stroke={strokeVal}
             strokeWidth={strokeWidthVal}
             className={`${fillClass} ${strokeClass}`}
           />
           <circle
-            cx={w * 0.5 + h / 2 + 5}
+            cx={gw + 5}
             cy={h / 2}
             r={4.5}
             fill="#0f172a"
@@ -2197,6 +2225,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     if (gateType === 'OR') {
       return (
         <g>
+          {/* Input lead extension stubs ensuring zero gap between x=0 input pins and curved back */}
+          <line x1="0" y1="20" x2="14" y2="20" stroke={strokeVal} strokeWidth={strokeWidthVal} />
+          <line x1="0" y1="60" x2="14" y2="60" stroke={strokeVal} strokeWidth={strokeWidthVal} />
           <path
             d={`M 0 0 Q ${w * 0.25} ${h * 0.5} 0 ${h} Q ${w * 0.6} ${h} ${w} ${h * 0.5} Q ${w * 0.6} 0 0 0 Z`}
             fill={fillVal}
@@ -2224,6 +2255,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       const gw = w - 10;
       return (
         <g>
+          <line x1="0" y1="20" x2="14" y2="20" stroke={strokeVal} strokeWidth={strokeWidthVal} />
+          <line x1="0" y1="60" x2="14" y2="60" stroke={strokeVal} strokeWidth={strokeWidthVal} />
           <path
             d={`M 0 0 Q ${gw * 0.25} ${h * 0.5} 0 ${h} Q ${gw * 0.6} ${h} ${gw} ${h * 0.5} Q ${gw * 0.6} 0 0 0 Z`}
             fill={fillVal}
@@ -2259,6 +2292,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     if (gateType === 'XOR') {
       return (
         <g>
+          {/* Input lead extension stubs ensuring zero gap from input pins through curved input arc */}
+          <line x1="-7" y1="20" x2="14" y2="20" stroke={strokeVal} strokeWidth={strokeWidthVal} />
+          <line x1="-7" y1="60" x2="14" y2="60" stroke={strokeVal} strokeWidth={strokeWidthVal} />
           <path
             d={`M -7 0 Q ${w * 0.25 - 7} ${h * 0.5} -7 ${h}`}
             fill="none"
@@ -2293,6 +2329,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       const gw = w - 10;
       return (
         <g>
+          <line x1="-7" y1="20" x2="14" y2="20" stroke={strokeVal} strokeWidth={strokeWidthVal} />
+          <line x1="-7" y1="60" x2="14" y2="60" stroke={strokeVal} strokeWidth={strokeWidthVal} />
           <path
             d={`M -7 0 Q ${gw * 0.25 - 7} ${h * 0.5} -7 ${h}`}
             fill="none"
@@ -3277,13 +3315,11 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
               const defaultPos = { x: 40, y: 80 + i * 70 };
               const pos = nodePositions[pin.id] || nodePositions[pin.name] || defaultPos;
               const rawVal = probeValues[pin.name] ?? probeValues[pin.id] ?? '0';
-              const displayVal = formatLogicValue(rawVal, pin.width || 1);
+              const { displayVal, buttonX, pillWidth, chassisWidth, isBus } = getPrimaryInputLayout(pin, rawVal);
               const isHigh = toBit(displayVal) === 1;
               const isHovered = hoveredPin?.nodeId === pin.id || hoveredPin?.nodeId === pin.name;
               const isStartPin = wiringStart?.nodeId === pin.id || wiringStart?.nodeId === pin.name;
               const isDragging = draggingNodeId === pin.id || draggingNodeId === pin.name;
-              const pillWidth = pin.width > 1 ? Math.max(30, displayVal.length * 8 + 10) : 30;
-              const chassisWidth = pin.width > 1 ? Math.max(130, 90 + pillWidth + 10) : 130;
               const clipId = `pill-clip-in-${pin.id}`;
 
               return (
@@ -3312,11 +3348,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     height="38"
                     rx="6"
                     fill="#0f172a"
-                    stroke={isHigh ? '#10b981' : '#334155'}
+                    stroke={isHigh ? '#10b981' : isBus ? '#38bdf8' : '#334155'}
                     strokeWidth={isHigh ? 1.5 : 1.25}
                     className={`transition-all duration-150 ${
                       isHigh
                         ? 'fill-slate-900/95 stroke-emerald-500/90 stroke-[1.5] shadow-lg shadow-emerald-500/10'
+                        : isBus
+                        ? 'fill-slate-900/95 stroke-cyan-500/90 stroke-[1.5] shadow-lg shadow-cyan-500/10'
                         : 'fill-slate-900/95 stroke-slate-700/80 stroke-[1.25] group-hover:stroke-indigo-500/80 shadow-md'
                     }`}
                   />
@@ -3336,44 +3374,39 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
                   {/* Pin Signal Label */}
                   <text x="42" y="23.5" fill="#f1f5f9" fontFamily="ui-monospace, monospace" fontSize="12" fontWeight="bold" className="fill-slate-100 font-mono font-bold text-xs">
-                    {pin.name.length > 6 ? pin.name.substring(0, 5) + '…' : pin.name}
+                    {pin.name}
                     {pin.width > 1 && (
                       <tspan fill="#c084fc" className="fill-purple-400 text-[10px] ml-0.5">[{pin.width - 1}:0]</tspan>
                     )}
                   </text>
 
-                  {/* Interactive Value Toggle Button */}
+                  {/* Interactive Value Toggle Button with Solid Semantic Color Fill */}
                   <g
-                    transform="translate(90, 8)"
+                    transform={`translate(${buttonX}, 8)`}
                     onClick={(e) => {
                       e.stopPropagation();
                       onToggleInput && onToggleInput(pin.name, rawVal);
                     }}
-                    className="cursor-pointer hover:scale-105 transition-transform"
+                    className="cursor-pointer hover:brightness-110 active:scale-95 transition-all"
                   >
                     <title>{`Click to toggle ${pin.name} (currently ${displayVal})`}</title>
                     <rect
                       width={pillWidth}
                       height="22"
                       rx="5"
-                      className={`transition-colors ${
-                        isHigh
-                          ? 'fill-emerald-500/25 stroke-emerald-400 stroke-[1.5]'
-                          : 'fill-slate-800 stroke-slate-600 stroke-[1] hover:fill-slate-750'
-                      }`}
+                      fill={isHigh ? '#059669' : isBus ? '#0e7490' : '#334155'}
+                      stroke={isHigh ? '#34d399' : isBus ? '#22d3ee' : '#64748b'}
+                      strokeWidth="1.5"
+                      className="shadow-md"
                     />
-                    <g clipPath={`url(#${clipId})`}>
-                      <text
-                        x={pillWidth / 2}
-                        y="15"
-                        textAnchor="middle"
-                        className={`font-mono font-bold text-xs ${
-                          isHigh ? 'fill-emerald-300' : 'fill-slate-300'
-                        }`}
-                      >
-                        {displayVal}
-                      </text>
-                    </g>
+                    <text
+                      x={pillWidth / 2}
+                      y="15.5"
+                      textAnchor="middle"
+                      className="font-mono font-bold text-xs fill-white select-none pointer-events-none"
+                    >
+                      {displayVal}
+                    </text>
                   </g>
 
                   {/* Solder Connection Terminal (Right Edge at x=chassisWidth, y=19) */}
@@ -3420,13 +3453,11 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
               const defaultPos = { x: 980, y: 80 + i * 70 };
               const pos = nodePositions[pin.id] || nodePositions[pin.name] || defaultPos;
               const rawVal = probeValues[pin.name] ?? probeValues[pin.id] ?? '0';
-              const displayVal = formatLogicValue(rawVal, pin.width || 1);
+              const { displayVal, buttonX, pillWidth, chassisWidth, isBus } = getPrimaryOutputLayout(pin, rawVal);
               const isHigh = toBit(displayVal) === 1;
               const isHovered = hoveredPin?.nodeId === pin.id || hoveredPin?.nodeId === pin.name;
               const isStartPin = wiringStart?.nodeId === pin.id || wiringStart?.nodeId === pin.name;
               const isDragging = draggingNodeId === pin.id || draggingNodeId === pin.name;
-              const pillWidth = Math.max(34, displayVal.length * 8 + 14);
-              const chassisWidth = Math.max(130, 86 + pillWidth + 10);
               const clipId = `pill-clip-out-${pin.id}`;
 
               return (
@@ -3491,11 +3522,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     height="38"
                     rx="6"
                     fill="#0f172a"
-                    stroke={isHigh ? '#10b981' : '#334155'}
+                    stroke={isHigh ? '#10b981' : isBus ? '#38bdf8' : '#334155'}
                     strokeWidth={isHigh ? 1.75 : 1.25}
                     className={`transition-all duration-150 ${
                       isHigh
                         ? 'fill-slate-900/95 stroke-emerald-500 stroke-[1.75] shadow-lg shadow-emerald-500/15'
+                        : isBus
+                        ? 'fill-slate-900/95 stroke-cyan-500 stroke-[1.75] shadow-lg shadow-cyan-500/15'
                         : 'fill-slate-900/95 stroke-slate-700/80 stroke-[1.25] group-hover:stroke-emerald-500/80 shadow-md'
                     }`}
                   />
@@ -3508,36 +3541,31 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
                   {/* Pin Signal Label */}
                   <text x="42" y="23.5" fill="#f1f5f9" fontFamily="ui-monospace, monospace" fontSize="12" fontWeight="bold" className="fill-slate-100 font-mono font-bold text-xs">
-                    {pin.name.length > 5 ? pin.name.substring(0, 4) + '…' : pin.name}
+                    {pin.name}
                     {pin.width > 1 && (
                       <tspan fill="#c084fc" className="fill-purple-400 text-[10px] ml-0.5">[{pin.width - 1}:0]</tspan>
                     )}
                   </text>
 
-                  {/* Live Logic State Monitor Pill */}
-                  <g transform="translate(86, 8)">
+                  {/* Live Logic State Monitor Pill with Solid Semantic Color Fill */}
+                  <g transform={`translate(${buttonX}, 8)`}>
                     <rect
                       width={pillWidth}
                       height="22"
                       rx="5"
-                      className={`transition-colors ${
-                        isHigh
-                          ? 'fill-emerald-500/25 stroke-emerald-400 stroke-[1.5]'
-                          : 'fill-slate-800 stroke-slate-700 stroke-[1]'
-                      }`}
+                      fill={isHigh ? '#059669' : isBus ? '#0e7490' : '#334155'}
+                      stroke={isHigh ? '#34d399' : isBus ? '#22d3ee' : '#64748b'}
+                      strokeWidth="1.5"
+                      className="shadow-md"
                     />
-                    <g clipPath={`url(#${clipId})`}>
-                      <text
-                        x={pillWidth / 2}
-                        y="15"
-                        textAnchor="middle"
-                        className={`font-mono font-bold text-xs ${
-                          isHigh ? 'fill-emerald-300' : 'fill-sky-300'
-                        }`}
-                      >
-                        {displayVal}
-                      </text>
-                    </g>
+                    <text
+                      x={pillWidth / 2}
+                      y="15.5"
+                      textAnchor="middle"
+                      className="font-mono font-bold text-xs fill-white select-none pointer-events-none"
+                    >
+                      {displayVal}
+                    </text>
                   </g>
 
                   {/* Drag Grip Dots */}

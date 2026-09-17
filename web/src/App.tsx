@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Header } from './components/Header';
 import { SchematicCanvas } from './components/SchematicCanvas';
@@ -124,6 +124,16 @@ export function App() {
   const [codeEditorReloadVersion, setCodeEditorReloadVersion] = useState<number>(0);
   const [targetOpenFilePath, setTargetOpenFilePath] = useState<string | undefined>(undefined);
   const [topFilePath, setTopFilePath] = useState<string>('src/full_adder.vhd');
+  const [incomingContextItem, setIncomingContextItem] = useState<{
+    type: string;
+    label: string;
+    data: any;
+  } | null>(null);
+
+  const handleAddToAgentContext = useCallback((item: { type: any; label: string; data: any }) => {
+    setIncomingContextItem(item);
+    setIsSidebarCollapsed(false);
+  }, []);
 
   useEffect(() => {
     if (!isAutosaveEnabled || !activeProjectId) return;
@@ -1063,6 +1073,7 @@ end rtl;`);
                 setGlobalSaveState(st);
                 if (txt) setGlobalSaveText(txt);
               }}
+              onAddToAgentContext={handleAddToAgentContext}
             />
           )}
 
@@ -1177,6 +1188,8 @@ end rtl;`);
               selectedModel={selectedModel}
               onUpdateOpenRouterConfig={handleSaveOpenRouterConfig}
               activeProjectId={activeProjectId}
+              incomingContextItem={incomingContextItem}
+              onClearIncomingContext={() => setIncomingContextItem(null)}
               onApplyDesignToCanvas={(code) => {
                 setVhdlCode(code);
                 handleSynthesizeVHDL(code);

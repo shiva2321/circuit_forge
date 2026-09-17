@@ -99,6 +99,7 @@ export interface StudioWindowManagerProps {
   onTopFileChange?: (path: string) => void;
   isAutosaveEnabled?: boolean;
   onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'idle', text?: string) => void;
+  onAddToAgentContext?: (item: { type: any; label: string; data: any }) => void;
 }
 
 const MIN_WINDOW_WIDTH = 340;
@@ -153,6 +154,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   onTopFileChange,
   isAutosaveEnabled = true,
   onSaveStatusChange,
+  onAddToAgentContext,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [topZ, setTopZ] = useState<number>(10);
@@ -174,6 +176,9 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   const handleAddToAgentContext = useCallback((item: { type: any; label: string; data: any }) => {
     setIncomingContextItem(item);
     setAgentContextSelection(item);
+    if (onAddToAgentContext) {
+      onAddToAgentContext(item);
+    }
     // Ensure agent window is visible
     setWindows(prev => {
       if (!prev.agent.isOpen || prev.agent.isMinimized) {
@@ -184,7 +189,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
       }
       return prev;
     });
-  }, [topZ]);
+  }, [topZ, onAddToAgentContext]);
 
   // VHDL history stack for agent revert
   const vhdlHistoryRef = useRef<string[]>([]);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Cpu,
   Play,
@@ -18,6 +18,7 @@ import {
   Save,
   Check,
   Loader2,
+  ChevronDown,
 } from 'lucide-react';
 import { CatalogCircuit } from '../types/circuit';
 
@@ -70,6 +71,26 @@ export const Header: React.FC<HeaderProps> = ({
   saveStatusText,
   saveStatusState = 'saved',
 }) => {
+  const [isCircuitMenuOpen, setIsCircuitMenuOpen] = useState(false);
+  const circuitMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (circuitMenuRef.current && !circuitMenuRef.current.contains(e.target as Node)) {
+        setIsCircuitMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsCircuitMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const getScaleBadge = (scale: number) => {
     switch (scale) {
       case 1:
@@ -87,6 +108,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const scaleInfo = getScaleBadge(currentScale);
   const isDesignActive = activeTab === 'design' || activeTab === 'schematic' || activeTab === 'code';
+  const activeCircuitObj = circuits.find((c) => c.id === selectedCircuit) || circuits[0];
 
   return (
     <header className="h-16 border-b border-slate-800 bg-[#070b12]/90 backdrop-blur px-4 flex items-center justify-between sticky top-0 z-30 overflow-x-auto">
@@ -124,24 +146,77 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Active Circuit Project Switcher */}
-        <div className="flex items-center space-x-2 bg-slate-900/90 border border-slate-800 rounded-lg px-2.5 py-1">
-          <Layers className="w-3.5 h-3.5 text-teal-400" />
-          <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold font-mono hidden sm:inline">
-            Active Design:
-          </span>
-          <select
-            value={selectedCircuit}
-            onChange={(e) => onSelectCircuit(e.target.value)}
-            className="bg-transparent border-0 text-xs font-medium text-slate-100 focus:outline-none focus:ring-0 cursor-pointer pr-2"
-            title="Switch active circuit project in EDA studio"
+        {/* Custom Active Circuit Project Switcher Dropdown */}
+        <div ref={circuitMenuRef} className="relative">
+          <button
+            onClick={() => setIsCircuitMenuOpen((prev) => !prev)}
+            className="flex items-center space-x-2 bg-slate-900/95 hover:bg-slate-800/90 border border-slate-700/80 hover:border-teal-500/60 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-100 shadow-sm transition cursor-pointer"
+            title="Switch active circuit design in EDA studio"
           >
-            {circuits.map((c) => (
-              <option key={c.id} value={c.id} className="bg-slate-900 text-slate-100">
-                {c.name} ({c.scale_label})
-              </option>
-            ))}
-          </select>
+            <Layers className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" />
+            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold font-mono hidden sm:inline">
+              Active:
+            </span>
+            <span className="font-semibold text-white max-w-[140px] truncate">
+              {activeCircuitObj?.name || selectedCircuit}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-teal-300 font-mono border border-slate-700 hidden md:inline">
+              {activeCircuitObj?.scale_label || `Scale ${currentScale}`}
+            </span>
+            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isCircuitMenuOpen ? 'rotate-180 text-teal-300' : ''}`} />
+          </button>
+
+          {isCircuitMenuOpen && (
+            <div className="absolute left-0 top-full mt-1.5 w-72 bg-slate-900/98 backdrop-blur-md border border-slate-700 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+              <div className="px-2.5 py-1.5 border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-between font-mono">
+                <span>Select Active Circuit</span>
+                <span className="text-teal-400">{circuits.length} designs</span>
+              </div>
+              <div className="py-1 max-h-64 overflow-y-auto space-y-0.5 no-scrollbar">
+                {circuits.map((c) => {
+                  const isSelected = c.id === selectedCircuit;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        onSelectCircuit(c.id);
+                        setIsCircuitMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-teal-950/70 border border-teal-600/50 text-white font-bold'
+                          : 'hover:bg-slate-800/80 text-slate-300 hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSelected ? 'bg-teal-400 shadow-sm shadow-teal-400' : 'bg-slate-500'}`} />
+                        <span className="text-xs truncate">{c.name}</span>
+                      </div>
+                      <div className="flex items-center space-x-1.5 flex-shrink-0 ml-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-950/80 text-slate-400 font-mono border border-slate-800">
+                          {c.scale_label}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-teal-400" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {onOpenProjectManager && (
+                <div className="pt-1.5 border-t border-slate-800 mt-1">
+                  <button
+                    onClick={() => {
+                      setIsCircuitMenuOpen(false);
+                      onOpenProjectManager();
+                    }}
+                    className="w-full text-center py-1.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/50 rounded-lg transition font-semibold cursor-pointer"
+                  >
+                    Browse Full Projects Workspace →
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Scale Badge */}

@@ -865,21 +865,24 @@ end rtl;`);
 
   const syncNetlistToCode = (updatedNetlist: NetlistGraph) => {
     try {
+      // Only perform automatic canvas-to-VHDL overwrite for canonical gate-level starter files
+      const mapping: Record<string, string> = {
+        scale1_full_adder: 'src/full_adder.vhd',
+        scale2_counter: 'src/counter_8bit.vhd',
+        scale3_alu: 'src/alu_32bit.vhd',
+        scale4_riscv: 'src/riscv_rv32i.vhd',
+      };
+      const canonicalTop = mapping[activeProjectId];
+      if (!canonicalTop || (topFilePath && topFilePath !== canonicalTop)) {
+        // Do not overwrite secondary or structural subsystem files with gate-level serializer
+        return;
+      }
+
       const generated = netlistToVHDL(updatedNetlist);
       if (generated) {
         setVhdlCode(generated);
         setSyncStatus('synced');
-        // Persist to the project's primary top HDL file on backend
-        const mapping: Record<string, string> = {
-          scale1_full_adder: 'src/full_adder.vhd',
-          scale2_counter: 'src/counter_8bit.vhd',
-          scale3_alu: 'src/alu_32bit.vhd',
-          scale4_riscv: 'src/riscv_rv32i.vhd',
-        };
-        const relPath = topFilePath || mapping[activeProjectId] || 'src/full_adder.vhd';
-        if (relPath && activeProjectId) {
-          writeProjectFile(activeProjectId, relPath, generated).catch(() => {});
-        }
+        writeProjectFile(activeProjectId, canonicalTop, generated).catch(() => {});
       }
     } catch (err) {
       console.error('Failed to serialize netlist to VHDL', err);

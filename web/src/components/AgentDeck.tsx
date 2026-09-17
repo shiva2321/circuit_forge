@@ -1057,7 +1057,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
     setSteerPrompt('');
     setContextChips([]);
 
-    if (agentState === 'RUNNING' || agentState === 'PAUSED') {
+    if (agentState !== 'IDLE' && agentState !== 'COMPLETED') {
       onIntervention('steer', { guidance: fullMessage });
     }
 
@@ -1082,7 +1082,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         onLaunchTask(res.action.goal, scale, cleanName, openrouterKey, selectedModel);
       } else if (res.action?.type === 'simulate' && onRunSimulation) {
         onRunSimulation();
-      } else if (res.action?.type === 'apply_code' && res.action.vhdl_code && onApplyDesignToCanvas) {
+      } else if ((res.action?.type === 'apply_code' || res.action?.type === 'synthesize') && res.action.vhdl_code && onApplyDesignToCanvas) {
         onApplyDesignToCanvas(res.action.vhdl_code, res.action.circuit_name || 'custom_design');
       }
     } catch (err) {

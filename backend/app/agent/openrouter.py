@@ -277,11 +277,19 @@ def format_studio_context(ctx: Dict[str, Any], proj_id: str) -> str:
     else:
         lines.append("\n*No active VHDL code currently open in editor.*")
 
-    # Inject live Cognitive Mental Map
+    # Inject live Cognitive Mental Map for internal telemetry only
     try:
         from backend.app.agent.mental_map import build_circuit_mental_map, format_mental_map_markdown
         mental_map = build_circuit_mental_map(ctx, proj_id)
-        lines.append("\n" + format_mental_map_markdown(mental_map))
+        mm_md = format_mental_map_markdown(mental_map)
+        lines.append(
+            "\n<system_internal_telemetry type=\"circuit_mental_map\">\n"
+            "INTERNAL TELEMETRY ONLY — DO NOT ECHO, RECITE, OR QUOTE TO THE USER:\n"
+            "This telemetry is for your situational awareness only. Do not copy headings like '### 🧠 CircuitForge Cognitive Mental Map' "
+            "or 'What We Can Do Next Together' into your answer. Speak directly as an expert engineer and execute tools to achieve the user's instructions.\n"
+            f"{mm_md}\n"
+            "</system_internal_telemetry>"
+        )
     except Exception:
         pass
 
@@ -766,6 +774,11 @@ class OpenRouterClient:
                 "   - CircuitForge automatically extracts ```vhdl blocks and provides the user with 1-click synthesis and canvas updates.\n"
                 "7. SECURITY & CREDENTIAL HYGIENE:\n"
                 "   - NEVER echo, leak, or log API keys, Bearer tokens, or credentials in thoughts or replies.\n"
+                "8. PROACTIVE EXECUTION & DO NOT RECITE INTERNAL TELEMETRY:\n"
+                "   - When the user asks to 'fix', 'reconnect', 'wire', 'repair', 'synthesize', 'make usable', or 'test', you MUST take direct action.\n"
+                "   - Use your filesystem tools (fs_write_file, fs_edit_file) and EDA tools (eda_synthesize_netlist) to perform the fix, or provide the complete, compilable VHDL in ```vhdl ... ``` code fences.\n"
+                "   - NEVER recite, quote, or print the <system_internal_telemetry> or Cognitive Mental Map headers (e.g. '### 🧠 CircuitForge Cognitive Mental Map' or 'What We Can Do Next Together'). That is internal telemetry only.\n"
+                "   - Do not stop halfway with generic advice when the user gave an explicit command to fix or wire.\n"
                 "═══════════════════════════════════════════════════════════════════════════\n\n"
                 "Autonomous Tool Capabilities:\n"
                 "- Workspace Filesystem: fs_list_files, fs_read_file, fs_write_file, fs_edit_file, fs_delete_file, fs_search_files\n"
@@ -793,8 +806,8 @@ class OpenRouterClient:
 
             try:
                 async with httpx.AsyncClient(timeout=45.0) as client:
-                    # Multi-turn autonomous tool execution loop (up to 6 turns)
-                    for turn in range(6):
+                    # Multi-turn autonomous tool execution loop (up to 12 turns)
+                    for turn in range(12):
                         payload: Dict[str, Any] = {
                             "model": target_model,
                             "messages": messages,
@@ -881,11 +894,32 @@ class OpenRouterClient:
                             content = msg_obj.get("content") or msg_obj.get("reasoning") or ""
                             sanitized_reply = sanitize_credentials(str(content).strip())
 
+                            # Check if the user asked to fix/reconnect/repair/make usable/synthesize
+                            is_actionable = any(k in message.lower() for k in ("fix", "reconnect", "wire", "repair", "make usable", "synthesize", "implement", "update", "resolve", "connect"))
+
                             # Extract synthesizable VHDL code blocks for 1-click apply action
                             action = None
                             vhdl_blocks = re.findall(r'```(?:vhdl)?\s*(library\s+ieee[\s\S]*?end\s+(?:architecture|behavioral|structural|rtl|synth|[a-zA-Z0-9_]+)?\s*;?)```', sanitized_reply, re.IGNORECASE)
                             if not vhdl_blocks:
                                 vhdl_blocks = re.findall(r'```vhdl\s*([\s\S]*?)\s*```', sanitized_reply, re.IGNORECASE)
+
+                            has_written_file = any(th.get("tool") in ("fs_write_file", "fs_edit_file", "eda_repair_and_synthesize") for th in tool_history)
+
+                            # Autonomous Continuation: If user asked to fix/reconnect, but model stopped without writing or providing VHDL code:
+                            if is_actionable and not has_written_file and not vhdl_blocks and turn < 10:
+                                messages.append(msg_obj)
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "[AUTONOMOUS CONTINUATION DIRECTIVE]: You have analyzed the design. "
+                                        f"The user's explicit command was: '{message.strip()}'. "
+                                        "Do not stop with a mental map or suggestions of what we could do next. "
+                                        "Proceed immediately to apply the fixes by editing or writing the VHDL file (using fs_edit_file or fs_write_file) "
+                                        "and verifying with eda_synthesize_netlist, OR output the complete, drop-in compilable VHDL code in a ```vhdl ... ``` code fence. "
+                                        "Perform this now."
+                                    )
+                                })
+                                continue
 
                             if vhdl_blocks:
                                 best_vhdl = max(vhdl_blocks, key=len).strip()
@@ -898,6 +932,24 @@ class OpenRouterClient:
                                         "circuit_name": extracted_ent,
                                         "file_path": active_file
                                     }
+                            elif has_written_file:
+                                last_write = next((th for th in reversed(tool_history) if th.get("tool") in ("fs_write_file", "fs_edit_file")), None)
+                                if last_write:
+                                    w_args = last_write.get("arguments", {})
+                                    w_content = w_args.get("content")
+                                    w_path = w_args.get("path", active_file)
+                                    if not w_content and tools_instance:
+                                        read_res = tools_instance.execute_tool("fs_read_file", {"path": w_path}, default_project_id=proj_id)
+                                        w_content = read_res.get("content")
+                                    if w_content and ("entity " in w_content.lower() or "architecture " in w_content.lower()):
+                                        ent_match = re.search(r'entity\s+([a-zA-Z0-9_]+)\s+is', w_content, re.IGNORECASE)
+                                        extracted_ent = ent_match.group(1) if ent_match else circuit_name
+                                        action = {
+                                            "type": "apply_code",
+                                            "vhdl_code": w_content,
+                                            "circuit_name": extracted_ent,
+                                            "file_path": w_path
+                                        }
 
                             if not action:
                                 lower_msg = message.lower()

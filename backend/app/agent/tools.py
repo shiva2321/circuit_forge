@@ -523,18 +523,25 @@ end Structural;"""
                 repairs_applied.append("Added missing IEEE standard logic libraries (STD_LOGIC_1164 and NUMERIC_STD).")
 
             sig_matches = re.findall(r'\bsignal\s+([a-zA-Z0-9_,\s]+)\s*:\s*([^;]+);', repaired, re.IGNORECASE)
-            assigned_sigs = set(re.findall(r'\b([a-zA-Z0-9_]+)\s*<=', repaired, re.IGNORECASE))
-            
-            for s_names, s_type in sig_matches:
-                for s in s_names.split(','):
-                    s_clean = s.strip()
-                    if s_clean and s_clean not in assigned_sigs and not any(k in s_clean.lower() for k in ('clk', 'rst')):
-                        default_val = "(others => '0')" if "vector" in s_type.lower() else "'0'"
-                        end_match = re.search(r'\bend\s+[a-zA-Z0-9_]*\s*;', repaired, re.IGNORECASE)
-                        if end_match:
-                            pos = end_match.start()
-                            repaired = repaired[:pos] + f"    {s_clean} <= {default_val}; -- Auto-tied to prevent floating CMOS state\n" + repaired[pos:]
+            # Signals assigned via <= or via component port maps
+            assigned_sigs = {s.lower() for s in re.findall(r'\b([a-zA-Z0-9_]+)\s*<=', repaired, re.IGNORECASE)}
+            for ps in re.findall(r'=>\s*([a-zA-Z0-9_]+)', repaired, re.IGNORECASE):
+                assigned_sigs.add(ps.lower())
+
+            arch_end_matches = list(re.finditer(r'\bend(?:\s+architecture)?(?:\s+[a-zA-Z0-9_]+)?\s*;', repaired, re.IGNORECASE))
+            if arch_end_matches:
+                target_end = arch_end_matches[-1]
+                pos = target_end.start()
+                tie_offs = ""
+                for s_names, s_type in sig_matches:
+                    for s in s_names.split(','):
+                        s_clean = s.strip()
+                        if s_clean and s_clean.lower() not in assigned_sigs and not any(k in s_clean.lower() for k in ('clk', 'rst')):
+                            default_val = "(others => '0')" if "vector" in s_type.lower() else "'0'"
+                            tie_offs += f"    {s_clean} <= {default_val}; -- Auto-tied to prevent floating CMOS state\n"
                             repairs_applied.append(f"Tied unassigned internal signal '{s_clean}' to safe logic level {default_val} to prevent crowbar current.")
+                if tie_offs:
+                    repaired = repaired[:pos] + tie_offs + repaired[pos:]
 
             repaired = re.sub(r'([a-zA-Z0-9_\'\"]+)\s*\n\s*(end\s+[a-zA-Z0-9_]+;)', r'\1;\n\2', repaired, flags=re.IGNORECASE)
             repaired = re.sub(r'(end\s+[a-zA-Z0-9_]+)(?!\s*;)\s*\n', r'\1;\n', repaired, flags=re.IGNORECASE)
@@ -547,12 +554,11 @@ end Structural;"""
             code = repaired
 
         parse_res = VHDLParser.parse_code(code)
-        netlist = NetlistCatalog.get_by_name_or_scale(clean_name)
-        if not netlist:
-            netlist = NetlistCatalog.get_scale1_full_adder()
+        synthesized_graph = VHDLParser.synthesize_from_vhdl(code, clean_name)
+        netlist_dict = synthesized_graph.to_dict()
 
         self.last_vhdl = code
-        self.last_netlist = netlist
+        self.last_netlist = synthesized_graph
 
         if p_id:
             try:
@@ -565,7 +571,7 @@ end Structural;"""
             "success": True,
             "circuit_name": clean_name,
             "vhdl_code": code,
-            "netlist": netlist.to_dict(),
+            "netlist": netlist_dict,
             "parse_valid": parse_res.is_valid,
             "repairs_applied": repairs_applied,
             "drc_status": "CLEAN",

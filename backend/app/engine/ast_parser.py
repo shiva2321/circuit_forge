@@ -375,6 +375,8 @@ class VHDLParser:
         for node in nodes:
             node_outgoing = [w for w in wires if w.source_node == node.id]
             for pin in node.outputs:
+                if getattr(pin, 'is_open', False) or (hasattr(pin, 'properties') and isinstance(pin.properties, dict) and pin.properties.get('open')):
+                    continue
                 pin_driven = any(
                     w.source_port.lower() in (pin.id.lower(), pin.name.lower(), f"out_{pin.name.lower()}")
                     for w in node_outgoing
@@ -454,6 +456,17 @@ class VHDLParser:
                     grouped_assigns[target_lhs] = []
                 grouped_assigns[target_lhs].append(raw_expr.strip())
 
+            # Find with-select statements: with sel select target <= ...;
+            with_select_pattern = re.compile(
+                r'with\s+([a-zA-Z0-9_]+)\s+select\s+([a-zA-Z0-9_]+)\s*<=\s*([^;]+);',
+                re.DOTALL | re.IGNORECASE
+            )
+            for sel_sig, target_lhs, raw_expr in with_select_pattern.findall(clean_arch_body):
+                target_lhs = target_lhs.strip()
+                if target_lhs not in grouped_assigns:
+                    grouped_assigns[target_lhs] = []
+                grouped_assigns[target_lhs].append(f"{sel_sig} {raw_expr.strip()}")
+
             # Detect case selectors and process sensitivity lists
             case_selectors = re.findall(r'case\s+([a-zA-Z0-9_]+)\s+is', clean_arch_body, re.IGNORECASE)
             process_sens: List[str] = []
@@ -493,6 +506,62 @@ class VHDLParser:
                 "cache_controller":      "Cache Controller",
                 "mmu":                   "Memory Mgmt Unit",
             }
+            KNOWN_COMPONENT_PORTS: Dict[str, Dict[str, str]] = {
+                "control_unit": {
+                    "clk": "in", "rst": "in", "opcode": "in", "funct3": "in", "bitstream_ready": "in",
+                    "reg_write": "out", "mem_read": "out", "mem_write": "out", "alu_src": "out",
+                    "wb_sel": "out", "alu_op": "out", "bitstream_ack": "out"
+                },
+                "register_file_64bit": {
+                    "clk": "in", "rst": "in", "we": "in", "waddr": "in", "wdata": "in", "raddr1": "in", "raddr2": "in",
+                    "rdata1": "out", "rdata2": "out"
+                },
+                "register_file_32bit": {
+                    "clk": "in", "rst": "in", "we": "in", "waddr": "in", "wdata": "in", "raddr1": "in", "raddr2": "in",
+                    "rdata1": "out", "rdata2": "out"
+                },
+                "alu_64bit": {
+                    "a": "in", "b": "in", "alu_op": "in",
+                    "result": "out", "zero": "out", "carry_out": "out", "overflow": "out"
+                },
+                "alu_32bit": {
+                    "a": "in", "b": "in", "alu_op": "in", "alucontrol": "in",
+                    "result": "out", "zero": "out", "carry_out": "out", "overflow": "out"
+                },
+                "memory_controller": {
+                    "clk": "in", "rst": "in", "mem_read": "in", "mem_write": "in", "addr": "in", "wdata": "in",
+                    "rdata": "out", "mem_we_out": "out", "mem_re_out": "out", "ready": "out"
+                },
+                "bitstream_rx": {
+                    "clk": "in", "rst": "in", "bitstream_in": "in", "bitstream_valid": "in", "bitstream_ack": "in",
+                    "parallel_data": "out", "data_ready": "out", "bit_counter_out": "out"
+                },
+                "full_adder": {
+                    "a": "in", "b": "in", "cin": "in", "sum": "out", "cout": "out"
+                },
+                "half_adder": {
+                    "a": "in", "b": "in", "sum": "out", "cout": "out"
+                },
+                "dff": {
+                    "clk": "in", "rst": "in", "d": "in", "q": "out", "qn": "out"
+                },
+                "mux_2to1": {
+                    "in0": "in", "in1": "in", "sel": "in", "out": "out"
+                }
+            }
+
+            # Parse declared components in architecture header if any
+            arch_header = arch_match.group(3) if arch_match else ""
+            comp_decl_pattern = re.compile(
+                r'component\s+([a-zA-Z0-9_]+)\s+(?:is\s+)?port\s*\((.*?)\)\s*;\s*end\s+component',
+                re.DOTALL | re.IGNORECASE
+            )
+            for c_name, c_ports_raw in comp_decl_pattern.findall(arch_header):
+                c_name_l = c_name.strip().lower()
+                parsed_c_ports = VHDLParser._parse_port_block(c_ports_raw)
+                if parsed_c_ports:
+                    KNOWN_COMPONENT_PORTS[c_name_l] = {p.name.lower(): p.direction.lower() for p in parsed_c_ports}
+
             comp_pattern = re.compile(
                 r'([a-zA-Z0-9_]+)\s*:\s*(?:entity\s+(?:work\.)?)?([a-zA-Z0-9_]+)\s+port\s+map\s*\((.*?)\)\s*;',
                 re.DOTALL | re.IGNORECASE
@@ -501,25 +570,44 @@ class VHDLParser:
             comp_nodes: List[NetlistNode] = []
             cols = 3  # pack into grid columns
             _comp_scale = 4 if len(comp_matches) >= 4 else 3
+            signal_producers: Dict[str, tuple] = {}  # sig_name_lower -> (node_id, port_id, formal_name, width)
+
             for ci, (inst_label, comp_type, port_map_text) in enumerate(comp_matches):
                 inst_label = inst_label.strip()
                 comp_type  = comp_type.strip().lower()
                 disp_label = COMPONENT_LABELS.get(comp_type, comp_type.replace("_", " ").title())
                 node_id_c  = f"node_{inst_label.lower()}_{ci+1}"
                 bindings   = VHDLParser._parse_port_map_bindings(port_map_text)
+                known_ports = KNOWN_COMPONENT_PORTS.get(comp_type, {})
                 in_ports_c: List[PortDef] = []
                 out_ports_c: List[PortDef] = []
+
                 for formal, actual in bindings:
                     formal_l = formal.lower()
-                    is_out = any(kw in formal_l for kw in ("result", "out", "data_out", "q", "addr", "we", "rd_data", "zero", "carry", "overflow", "mem_", "alu_"))
+                    if formal_l in known_ports:
+                        is_out = known_ports[formal_l] == "out"
+                    else:
+                        is_out = any(kw in formal_l for kw in ("out", "dout", "data_out", "rdata", "q", "result", "zero", "carry", "overflow", "ack", "done", "ready_out", "cout")) and not any(kw in formal_l for kw in ("bitstream_ack", "ready_in"))
+
+                    actual_clean = actual.strip()
+                    is_open_port = actual_clean.lower() == "open"
+                    actual_base = re.sub(r'\(.*?\)', '', actual_clean).strip().lower()
+
                     if is_out:
-                        out_ports_c.append(PortDef(f"out_{formal}", formal, "out", 64))
+                        p = PortDef(f"out_{formal}", formal, "out", 64)
+                        if is_open_port:
+                            setattr(p, 'is_open', True)
+                        out_ports_c.append(p)
+                        if actual_base and not is_open_port:
+                            signal_producers[actual_base] = (node_id_c, f"out_{formal}", formal, 64)
                     else:
                         in_ports_c.append(PortDef(f"in_{formal}", formal, "in", 64))
+
                 if not in_ports_c:
                     in_ports_c = [PortDef("in_clk", "clk", "in", 1), PortDef("in_rst", "rst", "in", 1)]
                 if not out_ports_c:
                     out_ports_c = [PortDef("out_result", "result", "out", 64)]
+
                 col_idx = ci % cols
                 row_idx = ci // cols
                 node_x  = 300 + col_idx * 300
@@ -536,7 +624,7 @@ class VHDLParser:
                     height=block_h,
                     inputs=in_ports_c,
                     outputs=out_ports_c,
-                    properties={"component": comp_type, "instance": inst_label},
+                    properties={"component": comp_type, "instance": inst_label, "bindings": bindings},
                     source_file=f"{comp_type}.vhd",
                     source_module=comp_type,
                     color_group=comp_type,
@@ -545,47 +633,176 @@ class VHDLParser:
 
             if comp_nodes:
                 nodes.extend(comp_nodes)
-                # Wire shared signals between component nodes
-                sig_producers: Dict[str, tuple] = {}  # formal_name → (node_id, port_id)
-                for cn in comp_nodes:
-                    for op in cn.outputs:
-                        sig_producers[op.name.lower()] = (cn.id, op.id)
+
+                # Glue logic / internal continuous assignments
+                po_names_lower = {p.name.lower() for p in primary_outputs}
+                glue_assigns: Dict[str, List[str]] = {}
+                for lhs, expr_list in grouped_assigns.items():
+                    if lhs.lower() not in po_names_lower:
+                        glue_assigns[lhs] = expr_list
+
+                # Synthesize glue logic nodes (multiplexers, sign extension, combinational logic)
+                glue_idx = 1
+                for lhs, expr_list in glue_assigns.items():
+                    lhs_l = lhs.lower()
+                    combined_exprs = " ".join(expr_list).lower()
+                    tokens = re.findall(r'\b[a-zA-Z0-9_]+\b', combined_exprs)
+                    operands: List[str] = []
+                    for t in tokens:
+                        if not t.isdigit() and t.lower() not in reserved_keywords and t.lower() != lhs_l and t not in operands:
+                            operands.append(t)
+
+                    is_mux = ("when" in combined_exprs and "else" in combined_exprs) or "select" in combined_exprs
+                    gate_type = "MUX" if is_mux else "CUSTOM"
+                    label = f"MUX ({lhs})" if is_mux else f"RTL ({lhs})"
+                    node_id_g = f"node_glue_{lhs.lower()}_{glue_idx}"
+                    in_ports_g = [PortDef(f"in_{op}", op, "in", 64) for op in operands]
+                    out_ports_g = [PortDef(f"out_{lhs}", lhs, "out", 64)]
+
+                    glue_node = NetlistNode(
+                        id=node_id_g,
+                        label=label,
+                        type=gate_type,
+                        scale=2,
+                        x=200 + (glue_idx - 1) * 220,
+                        y=600,
+                        width=180,
+                        height=max(100, len(in_ports_g) * 28),
+                        inputs=in_ports_g,
+                        outputs=out_ports_g,
+                        properties={"target_signal": lhs},
+                        source_file=f"{entity_name}.vhd",
+                        source_module=entity_name,
+                        color_group=entity_name,
+                        parent_instance=entity_name
+                    )
+                    nodes.append(glue_node)
+                    signal_producers[lhs_l] = (glue_node.id, f"out_{lhs}", lhs, 64)
+                    glue_idx += 1
+
                 wire_id_ctr = 0
-                for cn in comp_nodes:
-                    for ip in cn.inputs:
-                        key = ip.name.lower()
-                        if key in sig_producers:
-                            src_node, src_port = sig_producers[key]
-                            if src_node != cn.id:
+                # 1. Connect primary outputs forwarded by continuous assignments (e.g. alu_result_out <= s_alu_res;)
+                for lhs, expr_list in grouped_assigns.items():
+                    lhs_l = lhs.lower()
+                    po_match = next((p for p in primary_outputs if p.name.lower() == lhs_l), None)
+                    if po_match:
+                        rhs = expr_list[0].strip()
+                        rhs_base = re.sub(r'\(.*?\)', '', rhs).strip().lower()
+                        if rhs_base in signal_producers:
+                            src_node, src_port, _, _ = signal_producers[rhs_base]
+                            wires.append(NetlistWire(
+                                id=f"w_po_{wire_id_ctr}",
+                                source_node=src_node,
+                                source_port=src_port,
+                                target_node=po_match.id,
+                                target_port=po_match.name,
+                                width=po_match.width,
+                                label=lhs,
+                                source_file=f"{entity_name}.vhd"
+                            ))
+                            wire_id_ctr += 1
+                        else:
+                            in_match = next((p for p in primary_inputs if p.name.lower() == rhs_base), None)
+                            if in_match:
                                 wires.append(NetlistWire(
-                                    id=f"w_comp_{wire_id_ctr}",
+                                    id=f"w_pi_po_{wire_id_ctr}",
+                                    source_node=in_match.id,
+                                    source_port=in_match.name,
+                                    target_node=po_match.id,
+                                    target_port=po_match.name,
+                                    width=po_match.width,
+                                    label=lhs,
+                                    source_file=f"{entity_name}.vhd"
+                                ))
+                                wire_id_ctr += 1
+
+                # 2. Connect component node inputs, outputs, and glue logic
+                for cn in nodes:
+                    bindings = cn.properties.get("bindings", [])
+                    if bindings:
+                        for formal, actual in bindings:
+                            formal_l = formal.lower()
+                            actual_clean = actual.strip()
+                            if actual_clean.lower() == "open":
+                                continue
+                            actual_base = re.sub(r'\(.*?\)', '', actual_clean).strip().lower()
+                            is_input = any(ip.name.lower() == formal_l for ip in cn.inputs)
+
+                            if is_input:
+                                if actual_base in signal_producers:
+                                    src_node, src_port, _, _ = signal_producers[actual_base]
+                                    wires.append(NetlistWire(
+                                        id=f"w_comp_{wire_id_ctr}",
+                                        source_node=src_node,
+                                        source_port=src_port,
+                                        target_node=cn.id,
+                                        target_port=f"in_{formal}",
+                                        width=64,
+                                        label=actual_base,
+                                        source_file=cn.source_file
+                                    ))
+                                    wire_id_ctr += 1
+                                else:
+                                    in_match = next((p for p in primary_inputs if p.name.lower() == actual_base or p.name.lower() == formal_l), None)
+                                    if in_match:
+                                        wires.append(NetlistWire(
+                                            id=f"w_pi_{wire_id_ctr}",
+                                            source_node=in_match.id,
+                                            source_port=in_match.name,
+                                            target_node=cn.id,
+                                            target_port=f"in_{formal}",
+                                            width=in_match.width,
+                                            label=in_match.name,
+                                            source_file=cn.source_file
+                                        ))
+                                        wire_id_ctr += 1
+                            else:
+                                # Check if output port is directly connected to a primary output (e.g. mem_we_out => mem_we)
+                                po_match = next((p for p in primary_outputs if p.name.lower() == actual_base), None)
+                                if po_match:
+                                    wires.append(NetlistWire(
+                                        id=f"w_comp_po_{wire_id_ctr}",
+                                        source_node=cn.id,
+                                        source_port=f"out_{formal}",
+                                        target_node=po_match.id,
+                                        target_port=po_match.name,
+                                        width=po_match.width,
+                                        label=po_match.name,
+                                        source_file=cn.source_file
+                                    ))
+                                    wire_id_ctr += 1
+
+                    elif cn.type in ("MUX", "CUSTOM") and cn.id.startswith("node_glue_"):
+                        # Glue logic node inputs
+                        for ip in cn.inputs:
+                            op_base = ip.name.lower()
+                            if op_base in signal_producers:
+                                src_node, src_port, _, _ = signal_producers[op_base]
+                                wires.append(NetlistWire(
+                                    id=f"w_glue_{wire_id_ctr}",
                                     source_node=src_node,
                                     source_port=src_port,
                                     target_node=cn.id,
                                     target_port=ip.id,
                                     width=64,
-                                    label=ip.name,
-                                    source_file=cn.source_file
+                                    label=op_base,
+                                    source_file=f"{entity_name}.vhd"
                                 ))
                                 wire_id_ctr += 1
-                        else:
-                            # Connect from primary input stub
-                            in_match = next((p for p in primary_inputs if p.name.lower() == key), None)
-                            if in_match:
-                                wires.append(NetlistWire(
-                                    id=f"w_pi_{wire_id_ctr}",
-                                    source_node=in_match.id,
-                                    source_port=in_match.name,
-                                    target_node=cn.id,
-                                    target_port=ip.id,
-                                    width=in_match.width,
-                                    label=ip.name,
-                                    is_inherited=True,
-                                    parent_port=in_match.name,
-                                    child_port=ip.name,
-                                    source_file=cn.source_file
-                                ))
-                                wire_id_ctr += 1
+                            else:
+                                in_match = next((p for p in primary_inputs if p.name.lower() == op_base), None)
+                                if in_match:
+                                    wires.append(NetlistWire(
+                                        id=f"w_glue_pi_{wire_id_ctr}",
+                                        source_node=in_match.id,
+                                        source_port=in_match.name,
+                                        target_node=cn.id,
+                                        target_port=ip.id,
+                                        width=in_match.width,
+                                        label=in_match.name,
+                                        source_file=f"{entity_name}.vhd"
+                                    ))
+                                    wire_id_ctr += 1
 
             elif grouped_assigns:
                 total_nodes = len(grouped_assigns)

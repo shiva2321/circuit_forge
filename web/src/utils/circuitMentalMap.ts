@@ -226,9 +226,15 @@ export function generateMentalMap(
     const outKey = `${w.source_node}:${w.source_port}`;
     const inKey = `${w.target_node}:${w.target_port}`;
     connectedOutputs.add(outKey);
+    connectedOutputs.add(`${w.source_node}:${w.source_port.replace(/^out_/, '')}`);
     connectedInputs.add(inKey);
+    connectedInputs.add(`${w.target_node}:${w.target_port.replace(/^in_/, '')}`);
     connectedInputs.add(w.target_port);
+    connectedInputs.add(w.target_port.replace(/^in_/, ''));
     wireTargets.add(w.target_node);
+    wireTargets.add(w.target_node.replace(/^out_/, ''));
+    wireTargets.add(w.target_port);
+    wireTargets.add(w.target_port.replace(/^out_/, ''));
 
     wireSourcesPerTarget[inKey] = wireSourcesPerTarget[inKey] || [];
     wireSourcesPerTarget[inKey].push(outKey);
@@ -395,8 +401,19 @@ export function generateMentalMap(
   nodes.forEach((n) => {
     (n.inputs || []).forEach((inp) => {
       const pName = inp.name || inp.id;
-      const key = `${n.id}:${pName}`;
-      if (!connectedInputs.has(key) && !connectedInputs.has(pName)) {
+      const pId = inp.id || inp.name;
+      const cleanName = pName.replace(/^in_/, '');
+      const isConnected =
+        connectedInputs.has(`${n.id}:${pName}`) ||
+        connectedInputs.has(`${n.id}:${pId}`) ||
+        connectedInputs.has(`${n.id}:${cleanName}`) ||
+        connectedInputs.has(`${n.id}:in_${cleanName}`) ||
+        connectedInputs.has(pName) ||
+        connectedInputs.has(pId) ||
+        connectedInputs.has(cleanName) ||
+        connectedInputs.has(`in_${cleanName}`);
+
+      if (!isConnected) {
         floatingInputs.push(`${n.label || n.id}.${pName}`);
         identifiedIssues.push({
           id: `drc_floating_${n.id}_${pName}`,
@@ -433,7 +450,9 @@ export function generateMentalMap(
     }
   });
 
-  const unroutedOutputs = primaryOutputs.filter((p) => !wireTargets.has(p));
+  const unroutedOutputs = primaryOutputs.filter(
+    (p) => !wireTargets.has(p) && !wireTargets.has(`out_${p}`) && !wires.some((w) => w.target_node === p || w.target_node === `out_${p}` || w.target_port === p || w.target_port === `out_${p}`)
+  );
   unroutedOutputs.forEach((outName) => {
     identifiedIssues.push({
       id: `drc_unrouted_${outName}`,

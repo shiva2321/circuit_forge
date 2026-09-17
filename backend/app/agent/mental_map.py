@@ -377,11 +377,20 @@ def check_hardware_health_and_drc(
 
     for w in wires:
         if isinstance(w, dict):
-            s = f"{w.get('source_node')}:{w.get('source_port')}"
-            t = f"{w.get('target_node')}:{w.get('target_port')}"
-            connected_out_ports.add(s)
-            connected_in_ports.add(t)
-            wire_targets.add(w.get("target_node", ""))
+            src_node = str(w.get("source_node", ""))
+            src_port = str(w.get("source_port", ""))
+            tgt_node = str(w.get("target_node", ""))
+            tgt_port = str(w.get("target_port", ""))
+            connected_out_ports.add(f"{src_node}:{src_port}")
+            connected_out_ports.add(f"{src_node}:{src_port.replace('out_', '')}")
+            connected_in_ports.add(f"{tgt_node}:{tgt_port}")
+            connected_in_ports.add(f"{tgt_node}:{tgt_port.replace('in_', '')}")
+            connected_in_ports.add(tgt_port)
+            connected_in_ports.add(tgt_port.replace('in_', ''))
+            wire_targets.add(tgt_node)
+            wire_targets.add(tgt_node.replace('out_', ''))
+            wire_targets.add(tgt_port)
+            wire_targets.add(tgt_port.replace('out_', ''))
 
     floating_inputs: List[str] = []
     dead_outputs: List[str] = []
@@ -392,22 +401,41 @@ def check_hardware_health_and_drc(
         nid = n.get("id", "")
         for inp in n.get("inputs", []):
             pname = inp.get("name", inp.get("id", ""))
-            key = f"{nid}:{pname}"
-            if key not in connected_in_ports and pname not in connected_in_ports:
+            pid = inp.get("id", "")
+            is_connected = (
+                f"{nid}:{pname}" in connected_in_ports
+                or f"{nid}:{pid}" in connected_in_ports
+                or f"{nid}:in_{pname}" in connected_in_ports
+                or pname in connected_in_ports
+                or pid in connected_in_ports
+            )
+            if not is_connected:
                 floating_inputs.append(f"{n.get('label', nid)}.{pname}")
 
         for out in n.get("outputs", []):
             pname = out.get("name", out.get("id", ""))
-            key = f"{nid}:{pname}"
-            if key not in connected_out_ports and pname not in connected_out_ports and nid not in wire_targets:
+            pid = out.get("id", "")
+            is_driven = (
+                f"{nid}:{pname}" in connected_out_ports
+                or f"{nid}:{pid}" in connected_out_ports
+                or f"{nid}:out_{pname}" in connected_out_ports
+                or pname in connected_out_ports
+                or pid in connected_out_ports
+                or nid in wire_targets
+                or out.get("is_open")
+                or (isinstance(out.get("properties"), dict) and out.get("properties", {}).get("open"))
+            )
+            if not is_driven:
                 dead_outputs.append(f"{n.get('label', nid)}.{pname}")
 
     # Check unrouted primary outputs
-    unrouted_primary_outputs = [
-        p.get("name", p.get("id"))
-        for p in primary_outputs
-        if isinstance(p, dict) and p.get("name", p.get("id")) not in wire_targets
-    ]
+    unrouted_primary_outputs = []
+    for p in primary_outputs:
+        if isinstance(p, dict):
+            pname = p.get("name", "")
+            pid = p.get("id", "")
+            if pname not in wire_targets and pid not in wire_targets and f"out_{pname}" not in wire_targets:
+                unrouted_primary_outputs.append(pname or pid)
 
     return {
         "is_drc_clean": len(floating_inputs) == 0 and len(unrouted_primary_outputs) == 0,

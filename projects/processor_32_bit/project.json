@@ -1,0 +1,10 @@
+{
+  "id": "processor_32_bit",
+  "name": "processor_32_bit",
+  "scale": 4,
+  "scale_label": "Scale 4: Processor Core",
+  "description": "Circuit project created with Scale 4 template.",
+  "created_at": 1789668683.7753434,
+  "last_modified": 1789668683.7753434,
+  "top_file": "src/processor_32_bit.vhd"
+}

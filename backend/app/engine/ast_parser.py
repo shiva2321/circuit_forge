@@ -273,6 +273,129 @@ class VHDLParser:
                 ))
 
     @staticmethod
+    def run_circuit_drc(
+        nodes: List[Any],
+        wires: List[Any],
+        primary_inputs: List[Any],
+        primary_outputs: List[Any],
+        clean_text: str,
+        vhdl_text: str
+    ) -> List[Dict[str, Any]]:
+        """Runs thorough Design Rule Checking (DRC) for connection faults, bus contention, and floating gates."""
+        diagnostics: List[Dict[str, Any]] = []
+
+        # 1. Missing Connection / Undriven Input Pin Check (DRC-E101)
+        for node in nodes:
+            node_incoming = [w for w in wires if w.target_node == node.id]
+            for pin in node.inputs:
+                pin_connected = any(
+                    w.target_port.lower() in (pin.id.lower(), pin.name.lower(), f"in_{pin.name.lower()}")
+                    for w in node_incoming
+                )
+                if not pin_connected:
+                    diag = {
+                        "code": "DRC-E101",
+                        "severity": "error",
+                        "title": f"Undriven Input Pin ({node.label} ➔ {pin.name})",
+                        "message": f"Input terminal '{pin.name}' on '{node.label}' is floating with no driving wire connection.",
+                        "hardware_consequence": "Floating CMOS inputs drift to an indeterminate threshold (~VDD/2), partially turning ON both NMOS and PMOS channels. This causes crowbar shoot-through current, severe static leakage, thermal runaway, and unpredictable floating gate output oscillations.",
+                        "target_node": node.id,
+                        "target_port": pin.name,
+                        "source_file": getattr(node, 'source_file', 'design.vhd') or 'design.vhd',
+                        "suggested_fix": f"Route an input wire to port '{pin.name}', connect it to a primary input, or tie to '0' / '1'."
+                    }
+                    diagnostics.append(diag)
+                    if hasattr(node, 'diagnostics'):
+                        node.diagnostics.append(diag)
+
+        # 2. Multi-Driver Bus Contention / Short-Circuit Hazard Check (DRC-E102)
+        target_drivers: Dict[str, List[Any]] = {}
+        for w in wires:
+            key = f"{w.target_node}::{w.target_port}"
+            target_drivers.setdefault(key, []).append(w)
+
+        for key, drivers in target_drivers.items():
+            if len(drivers) > 1:
+                target_node_id, target_port_name = key.split("::", 1)
+                for w in drivers:
+                    w.has_conflict = True
+                    w.conflict_reason = f"Bus contention: {len(drivers)} active drivers"
+                driver_sources = [w.source_node for w in drivers]
+                diag = {
+                    "code": "DRC-E102",
+                    "severity": "error",
+                    "title": f"Bus Contention Short-Circuit on '{target_port_name}'",
+                    "message": f"Target port '{target_port_name}' is driven simultaneously by {len(drivers)} distinct active output pins ({', '.join(driver_sources)}).",
+                    "hardware_consequence": "When one output attempts to drive high ('1' / VDD) while another drives low ('0' / GND), a direct low-impedance short-circuit path forms across the power supply rails. This creates dangerous crowbar currents (>150mA), voltage rail droop, and will physically destroy silicon output buffers or burn PCB traces.",
+                    "target_node": target_node_id,
+                    "target_port": target_port_name,
+                    "source_file": getattr(drivers[0], 'source_file', 'design.vhd') or 'design.vhd',
+                    "suggested_fix": "Insert a 2:1 Multiplexer (MUX) to arbitrate between signals or use tri-state buffers ('Z') with mutually exclusive enable logic."
+                }
+                diagnostics.append(diag)
+
+        # 3. Incomplete Port Map Associations on Sub-modules (DRC-E103)
+        KNOWN_ENTITIES = {
+            "full_adder": ["a", "b", "cin", "sum", "cout"],
+            "half_adder": ["a", "b", "sum", "cout"],
+            "alu_32bit": ["a", "b", "alucontrol", "result", "zero"],
+            "counter_8bit": ["clk", "rst", "en", "count"],
+            "dff": ["clk", "d", "q"],
+            "mux_2to1": ["in0", "in1", "sel", "out"],
+        }
+        comp_matches = re.finditer(
+            r'([a-zA-Z0-9_]+)\s*:\s*(?:entity\s+(?:work\.)?)?([a-zA-Z0-9_]+)\s+port\s+map\s*\((.*?)\)\s*;',
+            clean_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        for m in comp_matches:
+            inst_name = m.group(1).strip()
+            comp_type = m.group(2).strip().lower()
+            port_text = m.group(3)
+            bindings = VHDLParser._parse_port_map_bindings(port_text)
+            mapped_formals = {f.lower() for f, _ in bindings}
+
+            if comp_type in KNOWN_ENTITIES:
+                req_ports = KNOWN_ENTITIES[comp_type]
+                missing = [p for p in req_ports if p not in mapped_formals]
+                if missing:
+                    diag = {
+                        "code": "DRC-E103",
+                        "severity": "error",
+                        "title": f"Incomplete Port Map on '{inst_name}' ({comp_type})",
+                        "message": f"Component instantiation '{inst_name}' of type '{comp_type}' is missing association for required port(s): [{', '.join(missing)}].",
+                        "hardware_consequence": "VHDL-2008 Standard LRM section 6.5.6.3 requires all undefaulted input ports to be explicitly associated in structural architectures. In hardware synthesis, unmapped inputs leave physical semiconductor pins disconnected and floating.",
+                        "target_node": f"node_{inst_name.lower()}",
+                        "source_file": f"{comp_type}.vhd",
+                        "suggested_fix": f"Explicitly map missing ports: {', '.join(f'{p} => <signal>' for p in missing)} or mark unneeded outputs with keyword 'open'."
+                    }
+                    diagnostics.append(diag)
+
+        # 4. Dangling / Dead-End Output Warning (DRC-W201)
+        for node in nodes:
+            node_outgoing = [w for w in wires if w.source_node == node.id]
+            for pin in node.outputs:
+                pin_driven = any(
+                    w.source_port.lower() in (pin.id.lower(), pin.name.lower(), f"out_{pin.name.lower()}")
+                    for w in node_outgoing
+                )
+                if not pin_driven and len(nodes) > 1:
+                    diag = {
+                        "code": "DRC-W201",
+                        "severity": "warning",
+                        "title": f"Unconnected Output ({node.label} ➔ {pin.name})",
+                        "message": f"Output pin '{pin.name}' on '{node.label}' has no downstream connections or fanout loads.",
+                        "hardware_consequence": "The gate transitions and consumes dynamic switching power (C*V^2*f), but its computed logic state is never observed or routed. EDA synthesis tools will prune and optimize away this dead logic.",
+                        "target_node": node.id,
+                        "target_port": pin.name,
+                        "source_file": getattr(node, 'source_file', 'design.vhd') or 'design.vhd',
+                        "suggested_fix": f"Route '{pin.name}' to a primary output or downstream component, or mark with 'open' in port map."
+                    }
+                    diagnostics.append(diag)
+
+        return diagnostics
+
+    @staticmethod
     def synthesize_from_vhdl(vhdl_text: str, circuit_name: Optional[str] = None) -> Any:
         """Synthesizes a custom VHDL string into an interactive NetlistGraph with nodes, ports, and wires strictly snapped to the 20px grid."""
         from backend.app.engine.netlist import NetlistGraph, NetlistNode, NetlistWire, PortDef
@@ -413,7 +536,11 @@ class VHDLParser:
                     height=block_h,
                     inputs=in_ports_c,
                     outputs=out_ports_c,
-                    properties={"component": comp_type, "instance": inst_label}
+                    properties={"component": comp_type, "instance": inst_label},
+                    source_file=f"{comp_type}.vhd",
+                    source_module=comp_type,
+                    color_group=comp_type,
+                    parent_instance=inst_label
                 ))
 
             if comp_nodes:
@@ -437,7 +564,8 @@ class VHDLParser:
                                     target_node=cn.id,
                                     target_port=ip.id,
                                     width=64,
-                                    label=ip.name
+                                    label=ip.name,
+                                    source_file=cn.source_file
                                 ))
                                 wire_id_ctr += 1
                         else:
@@ -451,7 +579,11 @@ class VHDLParser:
                                     target_node=cn.id,
                                     target_port=ip.id,
                                     width=in_match.width,
-                                    label=ip.name
+                                    label=ip.name,
+                                    is_inherited=True,
+                                    parent_port=in_match.name,
+                                    child_port=ip.name,
+                                    source_file=cn.source_file
                                 ))
                                 wire_id_ctr += 1
 
@@ -606,7 +738,11 @@ class VHDLParser:
                             "gate_type": gate_type,
                             "branches": len(expr_list),
                             "target_signal": lhs
-                        }
+                        },
+                        source_file=f"{entity_name}.vhd",
+                        source_module=entity_name,
+                        color_group=entity_name,
+                        parent_instance=entity_name
                     )
                     nodes.append(node)
 
@@ -621,7 +757,11 @@ class VHDLParser:
                                 target_node=node_id,
                                 target_port=f"in_{op}",
                                 width=in_match.width,
-                                label=op
+                                label=op,
+                                is_inherited=True,
+                                parent_port=in_match.name,
+                                child_port=f"in_{op}",
+                                source_file=f"{entity_name}.vhd"
                             ))
                         else:
                             prev_node = next((n for n in nodes if n.outputs[0].name.lower() == op.lower()), None)
@@ -633,7 +773,8 @@ class VHDLParser:
                                     target_node=node_id,
                                     target_port=f"in_{op}",
                                     width=1,
-                                    label=op
+                                    label=op,
+                                    source_file=f"{entity_name}.vhd"
                                 ))
 
                     # Route output wire to primary output
@@ -646,7 +787,11 @@ class VHDLParser:
                             target_node=out_match.id,
                             target_port=out_match.name,
                             width=out_match.width,
-                            label=lhs
+                            label=lhs,
+                            is_inherited=True,
+                            parent_port=out_match.name,
+                            child_port=out_ports[0].name,
+                            source_file=f"{entity_name}.vhd"
                         ))
 
                     node_idx += 1
@@ -665,7 +810,11 @@ class VHDLParser:
                 height=block_h,
                 inputs=[PortDef(p.id, p.name, "in", p.width) for p in primary_inputs],
                 outputs=[PortDef(p.id, p.name, "out", p.width) for p in primary_outputs],
-                properties={"processes": parse_res.processes_count}
+                properties={"processes": parse_res.processes_count},
+                source_file=f"{entity_name}.vhd",
+                source_module=entity_name,
+                color_group=entity_name,
+                parent_instance=entity_name
             )
             nodes.append(block_node)
             for pi in primary_inputs:
@@ -676,7 +825,11 @@ class VHDLParser:
                     target_node=block_node.id,
                     target_port=pi.id,
                     width=pi.width,
-                    label=pi.name
+                    label=pi.name,
+                    is_inherited=True,
+                    parent_port=pi.name,
+                    child_port=pi.id,
+                    source_file=f"{entity_name}.vhd"
                 ))
             for po in primary_outputs:
                 wires.append(NetlistWire(
@@ -686,8 +839,15 @@ class VHDLParser:
                     target_node=po.id,
                     target_port=po.name,
                     width=po.width,
-                    label=po.name
+                    label=po.name,
+                    is_inherited=True,
+                    parent_port=po.name,
+                    child_port=po.id,
+                    source_file=f"{entity_name}.vhd"
                 ))
+
+        # Run Design Rule Checking (DRC) for connection diagnostics, floating inputs, and contention
+        drc_diagnostics = VHDLParser.run_circuit_drc(nodes, wires, primary_inputs, primary_outputs, clean_text, vhdl_text)
 
         return NetlistGraph(
             name=entity_name,
@@ -697,5 +857,6 @@ class VHDLParser:
             primary_outputs=primary_outputs,
             nodes=nodes,
             wires=wires,
-            metadata={"source": "VHDL Synthesizer", "entities": len(parse_res.entities)}
+            metadata={"source": "VHDL Synthesizer", "entities": len(parse_res.entities)},
+            diagnostics=drc_diagnostics
         )

@@ -9,7 +9,7 @@
   "scale": 3,
   "scale_label": "Scale 3: Raspberry Pi 5 / CM5",
   "description": "Scaffolded via REST API",
-  "created_at": 1789529746.2437184,
-  "last_modified": 1789529746.2437184,
+  "created_at": 1789671583.9120424,
+  "last_modified": 1789671583.9120424,
   "top_file": "edge_controller.py"
 }

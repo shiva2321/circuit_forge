@@ -162,6 +162,17 @@ export async function chatWithAgent(
     wire_count?: number;
     probes?: Record<string, string>;
     faults?: Record<string, string>;
+    netlist?: any;
+    active_file?: string;
+    active_tab?: string;
+    active_tab_label?: string;
+    canvas_live_summary?: string;
+    drc_issues?: any[];
+    simulation_summary?: any;
+    active_selection?: any;
+    project_files?: string[];
+    attached_chips?: any[];
+    [key: string]: any;
   },
   openrouterKey?: string,
   model?: string,
@@ -170,7 +181,7 @@ export async function chatWithAgent(
   success: boolean;
   model: string;
   reply: string;
-  action?: { type: string; goal?: string };
+  action?: { type: string; goal?: string; vhdl_code?: string; circuit_name?: string; [key: string]: any };
   tool_history?: Array<{ tool: string; arguments?: any; result?: any }>;
   is_llm?: boolean;
 }> {

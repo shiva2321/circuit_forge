@@ -4,7 +4,7 @@ import { Header } from './components/Header';
 import { SchematicCanvas } from './components/SchematicCanvas';
 import { WaveformViewer } from './components/WaveformViewer';
 import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer';
-import { CodeEditor } from './components/CodeEditor';
+import { CodeEditor, isDesignRtlFile } from './components/CodeEditor';
 import { AgentDeck, AgentPhaseProgress } from './components/AgentDeck';
 import { ProjectManagerModal } from './components/ProjectManagerModal';
 import { StudioWindowManager, StudioLayoutMode } from './components/StudioWindowManager';
@@ -13,6 +13,7 @@ import { EmbeddedPlatformsDeck } from './components/EmbeddedPlatformsDeck';
 import { CatalogCircuit, NetlistGraph, NetlistNode, NetlistWire, WaveformData, SimulationSummary, AgentLog } from './types/circuit';
 import { ComponentBlueprint } from './components/ComponentPalette';
 import {
+  getStatus,
   getCircuitsCatalog,
   synthesizeCircuit,
   simulateCircuit,
@@ -21,6 +22,8 @@ import {
   lintVHDL,
   synthesizeVHDL,
   configureAgent,
+  writeProjectFile,
+  readProjectFile,
 } from './services/api';
 import { evaluateCircuitLogic } from './utils/circuitSimulator';
 import { netlistToVHDL } from './utils/netlistToVHDL';
@@ -78,13 +81,63 @@ export function App() {
     return localStorage.getItem('circuitforge_model') || 'anthropic/claude-3.5-sonnet';
   });
 
+  // Global Autosave Configuration & Persistence
+  const [isAutosaveEnabled, setIsAutosaveEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('circuitforge_autosave_enabled') !== 'false';
+  });
+  const [globalSaveState, setGlobalSaveState] = useState<'saved' | 'saving' | 'dirty' | 'idle'>('saved');
+  const [globalSaveText, setGlobalSaveText] = useState<string>('All saved');
+
+  const handleToggleAutosave = () => {
+    setIsAutosaveEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('circuitforge_autosave_enabled', String(next));
+      return next;
+    });
+  };
+
   const [vhdlCode, setVhdlCode] = useState<string>('');
   const [lintMessages, setLintMessages] = useState<any[]>([]);
   const [lastUpdatedKGNodeId, setLastUpdatedKGNodeId] = useState<string | null>(null);
-  const [probeValues, setProbeValues] = useState<Record<string, string>>({});
-  const [activeFaults, setActiveFaults] = useState<Record<string, string>>({});
+  const [probeValues, setProbeValues] = useState<Record<string, string>>(() => {
+    try {
+      const isAuto = localStorage.getItem('circuitforge_autosave_enabled') !== 'false';
+      const proj = localStorage.getItem('circuitforge_active_project') || 'scale1_full_adder';
+      if (isAuto) {
+        const saved = localStorage.getItem(`circuitforge_probes_${proj}`);
+        if (saved) return JSON.parse(saved);
+      }
+    } catch {}
+    return {};
+  });
+  const [activeFaults, setActiveFaults] = useState<Record<string, string>>(() => {
+    try {
+      const isAuto = localStorage.getItem('circuitforge_autosave_enabled') !== 'false';
+      const proj = localStorage.getItem('circuitforge_active_project') || 'scale1_full_adder';
+      if (isAuto) {
+        const saved = localStorage.getItem(`circuitforge_faults_${proj}`);
+        if (saved) return JSON.parse(saved);
+      }
+    } catch {}
+    return {};
+  });
   const [codeEditorReloadVersion, setCodeEditorReloadVersion] = useState<number>(0);
   const [targetOpenFilePath, setTargetOpenFilePath] = useState<string | undefined>(undefined);
+  const [topFilePath, setTopFilePath] = useState<string>('src/full_adder.vhd');
+
+  useEffect(() => {
+    if (!isAutosaveEnabled || !activeProjectId) return;
+    try {
+      localStorage.setItem(`circuitforge_probes_${activeProjectId}`, JSON.stringify(probeValues));
+    } catch {}
+  }, [probeValues, isAutosaveEnabled, activeProjectId]);
+
+  useEffect(() => {
+    if (!isAutosaveEnabled || !activeProjectId) return;
+    try {
+      localStorage.setItem(`circuitforge_faults_${activeProjectId}`, JSON.stringify(activeFaults));
+    } catch {}
+  }, [activeFaults, isAutosaveEnabled, activeProjectId]);
 
   const handleOpenFileInEditor = (projectId: string, filePath: string) => {
     setActiveProjectId(projectId);
@@ -159,8 +212,33 @@ export function App() {
     setActiveProjectId(projectId);
     localStorage.setItem('circuitforge_project_initialized', 'true');
 
+    const mapping: Record<string, string> = {
+      scale1_full_adder: 'src/full_adder.vhd',
+      scale2_counter: 'src/counter_8bit.vhd',
+      scale3_alu: 'src/alu_32bit.vhd',
+      scale4_riscv: 'src/riscv_rv32i.vhd',
+    };
+    const targetTop = mapping[projectId] || 'src/full_adder.vhd';
+    setTopFilePath(targetTop);
+
     const targetCircuit = projectToCircuitMap[projectId] || projectId;
     setSelectedCircuit(targetCircuit);
+
+    if (isAutosaveEnabled) {
+      try {
+        const savedProbes = localStorage.getItem(`circuitforge_probes_${projectId}`);
+        setProbeValues(savedProbes ? JSON.parse(savedProbes) : {});
+        const savedFaults = localStorage.getItem(`circuitforge_faults_${projectId}`);
+        setActiveFaults(savedFaults ? JSON.parse(savedFaults) : {});
+      } catch {
+        setProbeValues({});
+        setActiveFaults({});
+      }
+    } else {
+      setProbeValues({});
+      setActiveFaults({});
+    }
+
     await loadCircuit(targetCircuit, false);
   };
 
@@ -239,6 +317,14 @@ export function App() {
   };
 
   const wsRef = useRef<WebSocket | null>(null);
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+  const topFilePathRef = useRef(topFilePath);
+  topFilePathRef.current = topFilePath;
+  const selectedCircuitRef = useRef(selectedCircuit);
+  selectedCircuitRef.current = selectedCircuit;
+  const agentStateRef = useRef(agentState);
+  agentStateRef.current = agentState;
 
   // Initialize catalog and synthesize initial circuit
   useEffect(() => {
@@ -258,128 +344,250 @@ export function App() {
     init();
   }, []);
 
-  // WebSocket for real-time telemetry
+  // WebSocket for real-time telemetry with auto-reconnect and state reconciliation
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/live`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+    let isDisposed = false;
 
-    ws.onmessage = (event) => {
+    const syncAgentStatus = async () => {
       try {
-        const msg = JSON.parse(event.data);
-        if (msg.state) setAgentState(msg.state);
-
-        if (msg.type === 'agent_step_progress') {
-          const rawIdx =
-            msg.data.step_index !== undefined
-              ? msg.data.step_index
-              : msg.data.step
-              ? msg.data.step - 1
-              : 0;
-          const safeIdx = typeof rawIdx === 'number' && !isNaN(rawIdx) ? rawIdx : 0;
-          const normalized = { ...msg.data, step_index: safeIdx };
-          setCurrentPhase(normalized);
-          // Also record progress in log stream
-          setAgentLogs((prev) => [
-            ...prev,
-            {
-              time: Date.now(),
-              state: `PHASE ${safeIdx + 1}`,
-              action: msg.data.step_name || `Phase ${safeIdx + 1}`,
-              thought: msg.data.thought || 'Executing phase...',
-            },
-          ]);
-        } else if (msg.type === 'agent_thought') {
-          setAgentLogs((prev) => [...prev, msg.data]);
-        } else if (msg.type === 'agent_state_change') {
-          setAgentState(msg.data.state);
-        } else if (msg.type === 'circuit_designed') {
-          setVhdlCode(msg.data.vhdl_code);
-          setLintMessages(msg.data.lint_messages || []);
-        } else if (msg.type === 'netlist_synthesized') {
-          setNetlist(msg.data);
-        } else if (msg.type === 'simulation_finished') {
-          setSummary(msg.data.summary);
-          setWaveform(msg.data.waveform);
-          // update probes
-          const probes: Record<string, string> = {};
-          msg.data.waveform.signals.forEach((s: any) => {
-            if (s.transitions && s.transitions.length > 0) {
-              probes[s.name] = s.transitions[s.transitions.length - 1].val;
-            }
-          });
-          setProbeValues(probes);
-        } else if (msg.type === 'fault_injected' && msg.data) {
-          if (msg.data.fault !== null && msg.data.fault !== undefined && msg.data.net) {
-            setActiveFaults((prev) => ({ ...prev, [msg.data.net]: String(msg.data.fault) }));
-          } else if (msg.data.net) {
-            setActiveFaults((prev) => {
-              const next = { ...prev };
-              delete next[msg.data.net];
-              return next;
+        const st = await getStatus();
+        if (st && st.agent_state) {
+          setAgentState(st.agent_state);
+          if (st.current_phase) {
+            const rawIdx =
+              st.current_phase.step_index !== undefined
+                ? st.current_phase.step_index
+                : st.current_phase.step
+                ? st.current_phase.step - 1
+                : 0;
+            const safeIdx = typeof rawIdx === 'number' && !isNaN(rawIdx) ? rawIdx : 0;
+            setCurrentPhase({ ...st.current_phase, step_index: safeIdx });
+          } else if (st.agent_state === 'COMPLETED') {
+            setCurrentPhase({
+              step: 6,
+              step_index: 5,
+              total_steps: 6,
+              step_name: 'Knowledge & Reflection',
+              state: 'COMPLETED',
+              thought: 'Autonomous design, synthesis, simulation, and verification complete.'
             });
-          }
-        } else if (msg.type === 'kg_node_added' || msg.type === 'kg_node_updated') {
-          setLastUpdatedKGNodeId(msg.data.node?.id || msg.data.node_id);
-        } else if (msg.type === 'project_files_updated') {
-          // New VHDL files materialized by the Agent — reload file explorer
-          const d = msg.data as { project_id: string; files: string[]; top_file: string; modules: string[]; circuit_name: string };
-          if (d.project_id === activeProjectId || !activeProjectId) {
-            // Bump reload version so CodeEditor re-fetches the project tree
-            setCodeEditorReloadVersion((v) => v + 1);
-            // If a top structural file exists, load it into the editor
-            if (d.top_file) {
-              const topPath = d.top_file;
-              import('./services/api').then(({ readProjectFile, synthesizeVHDL: synVHDL }) => {
-                readProjectFile(d.project_id, topPath).then((resp: { path: string; content: string }) => {
-                  if (resp?.content) {
-                    setVhdlCode(resp.content);
-                    synVHDL(resp.content, d.circuit_name).then((nl: any) => {
-                      if (nl) setNetlist(nl);
-                    }).catch(() => {});
-                  }
-                }).catch(() => {});
-              }).catch(() => {});
-            }
-            // Add agent log entry
-            setAgentLogs((prev) => [
-              ...prev,
-              {
-                time: Date.now(),
-                state: 'MATERIALIZER',
-                action: 'files_synced',
-                thought: `Studio synced: ${d.files.length} file(s) written to project '${d.project_id}'. Top: ${d.top_file || 'N/A'}.`,
-                details: { files: d.files, top_file: d.top_file, modules: d.modules, project_id: d.project_id },
-              },
-            ]);
           }
         }
       } catch (e) {
-        console.error('WS parse error', e);
+        // silent fail during server restart
       }
     };
 
+    const connect = () => {
+      if (isDisposed) return;
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          syncAgentStatus();
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.state) setAgentState(msg.state);
+
+            if (msg.type === 'agent_step_progress') {
+              const rawIdx =
+                msg.data.step_index !== undefined
+                  ? msg.data.step_index
+                  : msg.data.step
+                  ? msg.data.step - 1
+                  : 0;
+              const safeIdx = typeof rawIdx === 'number' && !isNaN(rawIdx) ? rawIdx : 0;
+              const normalized = { ...msg.data, step_index: safeIdx };
+              setCurrentPhase(normalized);
+              setAgentLogs((prev) => [
+                ...prev,
+                {
+                  time: Date.now(),
+                  state: `PHASE ${safeIdx + 1}`,
+                  action: msg.data.step_name || `Phase ${safeIdx + 1}`,
+                  thought: msg.data.thought || 'Executing phase...',
+                },
+              ]);
+            } else if (msg.type === 'agent_thought') {
+              setAgentLogs((prev) => [...prev, msg.data]);
+            } else if (msg.type === 'agent_state_change') {
+              setAgentState(msg.data.state);
+              if (msg.data.state === 'COMPLETED') {
+                setCurrentPhase((prev) =>
+                  prev
+                    ? { ...prev, state: 'COMPLETED', status: 'COMPLETED', step_index: 5 }
+                    : {
+                        step: 6,
+                        step_index: 5,
+                        total_steps: 6,
+                        step_name: 'Knowledge & Reflection',
+                        state: 'COMPLETED',
+                        status: 'COMPLETED',
+                        thought: 'Autonomous design, synthesis, simulation, and verification complete.',
+                      }
+                );
+              }
+            } else if (msg.type === 'circuit_designed') {
+              setVhdlCode(msg.data.vhdl_code);
+              setLintMessages(msg.data.lint_messages || []);
+            } else if (msg.type === 'netlist_synthesized') {
+              setNetlist(msg.data);
+            } else if (msg.type === 'simulation_finished') {
+              setSummary(msg.data.summary);
+              setWaveform(msg.data.waveform);
+              const probes: Record<string, string> = {};
+              msg.data.waveform?.signals?.forEach((s: any) => {
+                if (s.transitions && s.transitions.length > 0) {
+                  probes[s.name] = s.transitions[s.transitions.length - 1].val;
+                }
+              });
+              setProbeValues(probes);
+            } else if (msg.type === 'fault_injected' && msg.data) {
+              if (msg.data.fault !== null && msg.data.fault !== undefined && msg.data.net) {
+                setActiveFaults((prev) => ({ ...prev, [msg.data.net]: String(msg.data.fault) }));
+              } else if (msg.data.net) {
+                setActiveFaults((prev) => {
+                  const next = { ...prev };
+                  delete next[msg.data.net];
+                  return next;
+                });
+              }
+            } else if (msg.type === 'kg_node_added' || msg.type === 'kg_node_updated') {
+              setLastUpdatedKGNodeId(msg.data.node?.id || msg.data.node_id);
+            } else if (msg.type === 'project_files_updated') {
+              const d = msg.data as {
+                project_id?: string;
+                files?: string[];
+                top_file?: string | null;
+                modules?: string[];
+                circuit_name?: string;
+                path?: string;
+                action?: string;
+              };
+              const currProj = activeProjectIdRef.current;
+              const targetProj = d.project_id || currProj;
+              if (targetProj === currProj || !currProj) {
+                setCodeEditorReloadVersion((v) => v + 1);
+                const currTop = topFilePathRef.current;
+                const topPath = d.top_file || (d.path && isDesignRtlFile(d.path) && d.path === currTop ? d.path : null);
+                if (topPath) {
+                  readProjectFile(targetProj, topPath).then((resp: { path: string; content: string }) => {
+                    if (resp?.content) {
+                      setVhdlCode(resp.content);
+                      synthesizeVHDL(resp.content, d.circuit_name || selectedCircuitRef.current).then((nl: any) => {
+                        if (nl) setNetlist(nl);
+                      }).catch(() => {});
+                    }
+                  }).catch(() => {});
+                }
+
+                const fileCount = d.files?.length ?? (d.path ? 1 : 0);
+                const displayFile = d.path || d.top_file || (d.files && d.files[0]) || 'file';
+                setAgentLogs((prev) => [
+                  ...prev,
+                  {
+                    time: Date.now(),
+                    state: 'AGENT_SYNC',
+                    action: d.action || 'files_synced',
+                    thought: `Studio synced: ${fileCount} file(s) updated in project '${targetProj}' (${displayFile}).`,
+                    details: { ...d, project_id: targetProj },
+                  },
+                ]);
+              }
+            }
+          } catch (e) {
+            console.error('WS parse error', e);
+          }
+        };
+
+        ws.onclose = () => {
+          if (!isDisposed) {
+            reconnectTimeout = setTimeout(connect, 1500);
+          }
+        };
+
+        ws.onerror = () => {
+          try {
+            ws?.close();
+          } catch {}
+        };
+      } catch (err) {
+        if (!isDisposed) {
+          reconnectTimeout = setTimeout(connect, 2000);
+        }
+      }
+    };
+
+    connect();
+
+    // Polling reconciliation guard: checks /api/status if agent appears stuck or running
+    const pollInterval = setInterval(() => {
+      if (agentStateRef.current === 'RUNNING') {
+        syncAgentStatus();
+      }
+    }, 2000);
+
     return () => {
-      ws.close();
+      isDisposed = true;
+      clearInterval(pollInterval);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) ws.close();
     };
   }, []);
 
   const loadCircuit = async (circuitId: string, updateProject: boolean = true) => {
     setSelectedCircuit(circuitId);
+    let currentProj = activeProjectId;
     if (updateProject) {
       const mappedProj = circuitToProjectMap[circuitId];
       if (mappedProj && mappedProj !== activeProjectId) {
         setActiveProjectId(mappedProj);
+        currentProj = mappedProj;
       }
     }
-    try {
-      const net = await synthesizeCircuit(circuitId);
-      setNetlist(net);
 
-      // Default sample VHDL for the circuit
-      if (circuitId.includes('adder')) {
-        setVhdlCode(`library IEEE;
+    const mapping: Record<string, string> = {
+      scale1_full_adder: 'src/full_adder.vhd',
+      scale2_counter: 'src/counter_8bit.vhd',
+      scale3_alu: 'src/alu_32bit.vhd',
+      scale4_riscv: 'src/riscv_rv32i.vhd',
+    };
+    const targetTop = mapping[currentProj] || topFilePath || 'src/full_adder.vhd';
+    setTopFilePath(targetTop);
+
+    let loadedFromDisk = false;
+    if (currentProj && targetTop) {
+      try {
+        const fileData = await readProjectFile(currentProj, targetTop);
+        if (fileData && fileData.content && fileData.content.trim()) {
+          setVhdlCode(fileData.content);
+          loadedFromDisk = true;
+          const net = await synthesizeVHDL(fileData.content, circuitId);
+          if (net && net.nodes && net.nodes.length > 0) {
+            setNetlist(net);
+          }
+        }
+      } catch (err) {
+        // Fallback to synthesizing circuit by template below
+      }
+    }
+
+    if (!loadedFromDisk) {
+      try {
+        const net = await synthesizeCircuit(circuitId);
+        setNetlist(net);
+
+        // Default sample VHDL for the circuit
+        if (circuitId.includes('adder')) {
+          setVhdlCode(`library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 
 entity full_adder is
@@ -401,8 +609,8 @@ begin
     c2 <= Cin and s1;
     Cout <= c1 or c2;
 end structural;`);
-      } else if (circuitId.includes('counter')) {
-        setVhdlCode(`library IEEE;
+        } else if (circuitId.includes('counter')) {
+          setVhdlCode(`library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
 
@@ -430,8 +638,8 @@ begin
     end process;
     count <= std_logic_vector(r_cnt);
 end rtl;`);
-      } else if (circuitId.includes('alu')) {
-        setVhdlCode(`library IEEE;
+        } else if (circuitId.includes('alu')) {
+          setVhdlCode(`library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
 
@@ -466,9 +674,14 @@ begin
         end if;
     end process;
 end rtl;`);
+        }
+      } catch (e) {
+        console.error('Circuit synthesis failed', e);
       }
+    }
 
-      // Automatically simulate to populate waveforms
+    // Automatically simulate to populate waveforms
+    try {
       const sim = await simulateCircuit(circuitId, 100);
       setSummary(sim.summary);
       setWaveform(sim.waveform);
@@ -481,7 +694,7 @@ end rtl;`);
       });
       setProbeValues(probes);
     } catch (e) {
-      console.error('Failed to load circuit', e);
+      console.error('Failed to simulate circuit after load', e);
     }
   };
 
@@ -582,12 +795,13 @@ end rtl;`);
     configureAgent(key, model).catch(() => {});
   };
 
-  const handleAgentIntervention = async (action: 'pause' | 'resume' | 'step' | 'steer', params?: { guidance?: string }) => {
+  const handleAgentIntervention = async (action: 'pause' | 'resume' | 'step' | 'steer' | 'stop', params?: { guidance?: string }) => {
     if (action === 'pause') setAgentState('PAUSED');
     if (action === 'resume') setAgentState('RUNNING');
     if (action === 'step') setAgentState('RUNNING');
+    if (action === 'stop') { setAgentState('IDLE'); setCurrentPhase(null); }
     try {
-      await sendAgentIntervention(action, params);
+      await sendAgentIntervention(action as any, params);
     } catch (e) {
       console.error('Agent intervention failed', e);
     }
@@ -645,6 +859,17 @@ end rtl;`);
       if (generated) {
         setVhdlCode(generated);
         setSyncStatus('synced');
+        // Persist to the project's primary top HDL file on backend
+        const mapping: Record<string, string> = {
+          scale1_full_adder: 'src/full_adder.vhd',
+          scale2_counter: 'src/counter_8bit.vhd',
+          scale3_alu: 'src/alu_32bit.vhd',
+          scale4_riscv: 'src/riscv_rv32i.vhd',
+        };
+        const relPath = topFilePath || mapping[activeProjectId] || 'src/full_adder.vhd';
+        if (relPath && activeProjectId) {
+          writeProjectFile(activeProjectId, relPath, generated).catch(() => {});
+        }
       }
     } catch (err) {
       console.error('Failed to serialize netlist to VHDL', err);
@@ -652,85 +877,98 @@ end rtl;`);
   };
 
   const handleAddComponent = (blueprint: ComponentBlueprint, pos: { x: number; y: number }) => {
-    if (!netlist) return;
-    const count = netlist.nodes.filter((n) => n.type === blueprint.type).length + 1;
-    const newId = `${blueprint.type.toLowerCase()}_${Date.now().toString().slice(-4)}`;
-    const newNode: NetlistNode = {
-      id: newId,
-      label: `${blueprint.name} ${count}`,
-      type: blueprint.type,
-      scale: blueprint.scale || 1,
-      x: pos.x,
-      y: pos.y,
-      width: blueprint.width,
-      height: blueprint.height,
-      inputs: blueprint.inputs.map((p) => ({
-        id: `${newId}_${p.name}`,
-        name: p.name,
-        direction: 'in',
-        width: p.width || 1,
-      })),
-      outputs: blueprint.outputs.map((p) => ({
-        id: `${newId}_${p.name}`,
-        name: p.name,
-        direction: 'out',
-        width: p.width || 1,
-      })),
-      properties: { gate_type: blueprint.type, scale: blueprint.scale },
-    };
-    const updatedNetlist = {
-      ...netlist,
-      nodes: [...netlist.nodes, newNode],
-    };
-    setNetlist(updatedNetlist);
-    const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
-    setProbeValues(simState.probeValues);
-    syncNetlistToCode(updatedNetlist);
+    setNetlist((currentNetlist) => {
+      if (!currentNetlist) return currentNetlist;
+      const count = currentNetlist.nodes.filter((n) => n.type === blueprint.type).length + 1;
+      const newId = `${blueprint.type.toLowerCase()}_${Date.now().toString().slice(-4)}`;
+      const newNode: NetlistNode = {
+        id: newId,
+        label: `${blueprint.name} ${count}`,
+        type: blueprint.type,
+        scale: blueprint.scale || 1,
+        x: pos.x,
+        y: pos.y,
+        width: blueprint.width,
+        height: blueprint.height,
+        inputs: blueprint.inputs.map((p) => ({
+          id: `${newId}_${p.name}`,
+          name: p.name,
+          direction: 'in',
+          width: p.width || 1,
+        })),
+        outputs: blueprint.outputs.map((p) => ({
+          id: `${newId}_${p.name}`,
+          name: p.name,
+          direction: 'out',
+          width: p.width || 1,
+        })),
+        properties: { gate_type: blueprint.type, scale: blueprint.scale },
+      };
+      const updatedNetlist = {
+        ...currentNetlist,
+        nodes: [...currentNetlist.nodes, newNode],
+      };
+      const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
+      setProbeValues(simState.probeValues);
+      syncNetlistToCode(updatedNetlist);
+      return updatedNetlist;
+    });
   };
 
   const handleDeleteComponent = (nodeId: string) => {
-    if (!netlist) return;
-    const updatedNetlist = {
-      ...netlist,
-      nodes: netlist.nodes.filter((n) => n.id !== nodeId),
-      wires: netlist.wires.filter((w) => w.source_node !== nodeId && w.target_node !== nodeId),
-    };
-    setNetlist(updatedNetlist);
-    const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
-    setProbeValues(simState.probeValues);
-    syncNetlistToCode(updatedNetlist);
+    setNetlist((currentNetlist) => {
+      if (!currentNetlist) return currentNetlist;
+      const targetNode = currentNetlist.nodes.find((n) => n.id === nodeId || n.label === nodeId);
+      const targetIds = new Set([nodeId, targetNode?.id, targetNode?.label].filter(Boolean) as string[]);
+      const updatedNetlist = {
+        ...currentNetlist,
+        nodes: currentNetlist.nodes.filter((n) => !targetIds.has(n.id) && !targetIds.has(n.label)),
+        wires: currentNetlist.wires.filter((w) => !targetIds.has(w.source_node) && !targetIds.has(w.target_node)),
+      };
+      const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
+      setProbeValues(simState.probeValues);
+      syncNetlistToCode(updatedNetlist);
+      return updatedNetlist;
+    });
   };
 
   const handleAddWire = (newWire: NetlistWire) => {
-    if (!netlist) return;
-    const exists = netlist.wires.some(
-      (w) =>
-        w.source_node === newWire.source_node &&
-        w.source_port === newWire.source_port &&
-        w.target_node === newWire.target_node &&
-        w.target_port === newWire.target_port
-    );
-    if (exists) return;
-    const updatedNetlist = {
-      ...netlist,
-      wires: [...netlist.wires, newWire],
-    };
-    setNetlist(updatedNetlist);
-    const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
-    setProbeValues(simState.probeValues);
-    syncNetlistToCode(updatedNetlist);
+    setNetlist((currentNetlist) => {
+      if (!currentNetlist) return currentNetlist;
+      const normPort = (p: string = '') => p.toLowerCase().replace(/^(in_|out_|sig_|s_)/, '').trim();
+      const normNode = (n: string = '') => n.toLowerCase().trim();
+
+      // Filter out any existing wire driving the same target input port
+      const filteredWires = currentNetlist.wires.filter(
+        (w) =>
+          !(
+            (w.target_node === newWire.target_node || normNode(w.target_node) === normNode(newWire.target_node)) &&
+            (w.target_port === newWire.target_port || normPort(w.target_port) === normPort(newWire.target_port))
+          )
+      );
+      const updatedNetlist = {
+        ...currentNetlist,
+        wires: [...filteredWires, newWire],
+      };
+      const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
+      setProbeValues(simState.probeValues);
+      syncNetlistToCode(updatedNetlist);
+      return updatedNetlist;
+    });
   };
 
   const handleDeleteWire = (wireId: string) => {
-    if (!netlist) return;
-    const updatedNetlist = {
-      ...netlist,
-      wires: netlist.wires.filter((w) => w.id !== wireId),
-    };
-    setNetlist(updatedNetlist);
-    const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
-    setProbeValues(simState.probeValues);
-    syncNetlistToCode(updatedNetlist);
+    setNetlist((currentNetlist) => {
+      if (!currentNetlist) return currentNetlist;
+      const updatedNetlist = {
+        ...currentNetlist,
+        wires: currentNetlist.wires.filter((w) => w.id !== wireId),
+      };
+      const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
+      setProbeValues(simState.probeValues);
+      syncNetlistToCode(updatedNetlist);
+      return updatedNetlist;
+    });
   };
 
   const currentScale = netlist ? netlist.scale : 1;
@@ -756,6 +994,10 @@ end rtl;`);
         onOpenProjectManager={() => setIsProjectManagerOpen(true)}
         onToggleAgentPanel={() => setIsSidebarCollapsed((c) => !c)}
         isAgentPanelOpen={!isSidebarCollapsed}
+        isAutosaveEnabled={isAutosaveEnabled}
+        onToggleAutosave={handleToggleAutosave}
+        saveStatusText={globalSaveText}
+        saveStatusState={globalSaveState}
       />
 
       {/* Main Workspace Area */}
@@ -801,6 +1043,7 @@ end rtl;`);
               lastUpdatedKGNodeId={lastUpdatedKGNodeId}
 
               agentLogs={agentLogs}
+              onClearLogs={() => setAgentLogs([])}
               currentPhase={currentPhase}
               openrouterKey={openrouterKey}
               selectedModel={selectedModel}
@@ -813,6 +1056,13 @@ end rtl;`);
               onChangeLayoutMode={setStudioLayoutMode}
               codeEditorReloadVersion={codeEditorReloadVersion}
               targetOpenFilePath={targetOpenFilePath}
+              topFilePath={topFilePath}
+              onTopFileChange={setTopFilePath}
+              isAutosaveEnabled={isAutosaveEnabled}
+              onSaveStatusChange={(st, txt) => {
+                setGlobalSaveState(st);
+                if (txt) setGlobalSaveText(txt);
+              }}
             />
           )}
 
@@ -841,8 +1091,8 @@ end rtl;`);
           )}
         </div>
 
-        {/* Interactive Resizer Splitter Bar (Split Mode Docked Sidebar) */}
-        {!isSidebarCollapsed && studioLayoutMode === 'split' && (
+        {/* Interactive Resizer Splitter Bar (Docked Sidebar on all tabs or split mode) */}
+        {!isSidebarCollapsed && (activeTab !== 'design' || studioLayoutMode === 'split') && (
           <div
             onMouseDown={handleMouseDownResizer}
             onDoubleClick={handleDoubleClickResizer}
@@ -875,8 +1125,8 @@ end rtl;`);
           </div>
         )}
 
-        {/* Right Pane: Autonomous Agent Observer Deck & Intervention Station (Docked in Split View) */}
-        {studioLayoutMode === 'split' && (
+        {/* Right Pane: Autonomous Agent Observer Deck & Intervention Station (Accessible on Every Tab) */}
+        {(activeTab !== 'design' || studioLayoutMode === 'split') && (
           <div
             style={{ width: isSidebarCollapsed ? 0 : `${sidebarWidth}px` }}
             className={`h-full flex flex-col flex-shrink-0 overflow-hidden ${
@@ -885,6 +1135,7 @@ end rtl;`);
           >
             <AgentDeck
               logs={agentLogs}
+              onClearLogs={() => setAgentLogs([])}
               agentState={agentState}
               onIntervention={handleAgentIntervention}
               onLaunchTask={handleLaunchTask}
@@ -896,6 +1147,30 @@ end rtl;`);
                 wire_count: netlist?.wires.length || 0,
                 probes: probeValues,
                 faults: activeFaults,
+                netlist: netlist,
+                active_file: targetOpenFilePath || topFilePath || 'src/full_adder.vhd',
+                active_tab: activeTab,
+                active_tab_label:
+                  activeTab === 'design'
+                    ? 'Design & RTL Studio'
+                    : activeTab === 'waveform'
+                    ? 'Timing Waveforms'
+                    : activeTab === 'kg'
+                    ? 'Knowledge Graph'
+                    : activeTab === 'lifecycle'
+                    ? 'Hardware Lifecycle & DFM'
+                    : activeTab === 'embedded'
+                    ? 'Embedded Platforms & MCUs'
+                    : 'EDA Studio',
+                canvas_live_summary: `${netlist?.nodes.length || 0} gates, ${netlist?.wires.length || 0} nets, ${Object.keys(probeValues).length} active probes, ${Object.keys(activeFaults).length} injected faults. Simulation is ${isSimulating ? 'RUNNING' : 'IDLE'}.`,
+                drc_issues: lintMessages || [],
+                simulation_summary: summary ? {
+                  status: summary.assertions?.all_passed ? 'PASSED' : (summary.assertions?.failed ? 'FAILED' : 'COMPLETED'),
+                  duration_ns: summary.total_time_ns || 100,
+                  clock_period_ns: 10,
+                  assertions_passed: summary.assertions?.passed || 0,
+                  assertions_failed: summary.assertions?.failed || 0,
+                } : undefined,
               }}
               currentPhase={currentPhase}
               openrouterKey={openrouterKey}
@@ -910,8 +1185,8 @@ end rtl;`);
           </div>
         )}
 
-        {/* Floating Expand Tab when collapsed (Split Mode only) */}
-        {isSidebarCollapsed && studioLayoutMode === 'split' && (
+        {/* Floating Expand Tab when collapsed (Accessible on every tab) */}
+        {isSidebarCollapsed && (activeTab !== 'design' || studioLayoutMode === 'split') && (
           <button
             onClick={() => setIsSidebarCollapsed(false)}
             className="absolute right-0 top-1/2 -translate-y-1/2 z-40 bg-slate-900/95 hover:bg-purple-950 border-l border-t border-b border-purple-800/80 hover:border-purple-500 rounded-l-xl py-3 px-2 shadow-2xl flex flex-col items-center gap-2.5 group transition-all backdrop-blur cursor-pointer"

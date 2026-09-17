@@ -11,12 +11,14 @@ entity full_adder is
     );
 end full_adder;
 
-architecture Dataflow of full_adder is
-    signal s1, c1, c2 : STD_LOGIC;
+architecture Structural of full_adder is
+    signal s1 : STD_LOGIC;
+    signal c1 : STD_LOGIC;
+    signal c2 : STD_LOGIC;
 begin
-    s1   <= A xor B;
-    Sum  <= s1 xor Cin;
-    c1   <= A and B;
-    c2   <= s1 and Cin;
+    s1 <= A xor B;
+    Sum <= s1 xor Cin;
+    c1 <= A and B;
+    c2 <= s1 and Cin;
     Cout <= c1 or c2;
-end Dataflow;
+end Structural;

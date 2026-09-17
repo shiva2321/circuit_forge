@@ -56,9 +56,19 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
   onOpenFileInEditor,
   onSelectProject,
 }) => {
-  const [activeTab, setActiveTab] = useState<PillarTab>('multiphysics');
+  const [activeTab, setActiveTab] = useState<PillarTab>(() => {
+    const saved = localStorage.getItem('circuitforge_lifecycle_tab');
+    if (saved === 'multiphysics' || saved === 'forging' || saved === 'qa' || saved === 'firmware' || saved === 'supply_chain') {
+      return saved;
+    }
+    return 'multiphysics';
+  });
   const [loading, setLoading] = useState<boolean>(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('circuitforge_lifecycle_tab', activeTab);
+  }, [activeTab]);
 
   // Pillar 1: Multiphysics State
   const [mpClockMhz, setMpClockMhz] = useState<number>(350);
@@ -83,7 +93,15 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
 
   // Pillar 4: Firmware & Security State
   const [baseAddress, setBaseAddress] = useState<string>('0x40000000');
-  const [activeFwTab, setActiveFwTab] = useState<'c_hal' | 'rust_pac' | 'rtos' | 'security'>('c_hal');
+  const [activeFwTab, setActiveFwTab] = useState<'c_hal' | 'rust_pac' | 'rtos' | 'security'>(() => {
+    const saved = localStorage.getItem('circuitforge_lifecycle_fw_tab');
+    if (saved === 'c_hal' || saved === 'rust_pac' || saved === 'rtos' || saved === 'security') return saved;
+    return 'c_hal';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('circuitforge_lifecycle_fw_tab', activeFwTab);
+  }, [activeFwTab]);
   const [firmwareData, setFirmwareData] = useState<any>(null);
 
   // Pillar 5: Supply Chain & BOM State
@@ -916,11 +934,15 @@ export const TurnkeyLifecycleDeck: React.FC<TurnkeyLifecycleDeckProps> = ({
                     <div className="pt-2">
                       <span className="text-[10px] font-mono text-slate-500 block mb-1">8-Zone Thermal Profile:</span>
                       <div className="grid grid-cols-4 gap-1 text-[10px] font-mono text-center">
-                        {forgingData.smt_assembly?.reflow_zones?.slice(0, 4).map((z: any, i: number) => (
-                          <div key={i} className="p-1 bg-slate-900 rounded border border-slate-800 text-slate-300">
-                            {z.zone_name.split(' ')[0]}: {z.setpoint_temp_c}°C
-                          </div>
-                        ))}
+                        {forgingData.smt_assembly?.reflow_zones?.map((z: any, i: number) => {
+                          const zoneLabel = (z?.zone_name || z?.name || `Zone ${z?.zone ?? (i + 1)}`).toString().split(' ')[0];
+                          const temp = z?.setpoint_temp_c ?? z?.target_temp_c ?? 0;
+                          return (
+                            <div key={i} className="p-1 bg-slate-900 rounded border border-slate-800 text-slate-300">
+                              {zoneLabel}: {temp}°C
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

@@ -29,6 +29,7 @@ import {
   File,
   PanelLeftClose,
   PanelLeft,
+  Bot,
 } from 'lucide-react';
 import {
   getToolchainStatus,
@@ -57,6 +58,25 @@ export function getMonacoLanguage(filePath: string): string {
   return 'plaintext';
 }
 
+export function isDesignRtlFile(filePath: string): boolean {
+  const lower = (filePath || '').toLowerCase();
+  if (!lower.endsWith('.vhd') && !lower.endsWith('.vhdl') && !lower.endsWith('.v') && !lower.endsWith('.sv')) {
+    return false;
+  }
+  if (
+    lower.includes('tb/') ||
+    lower.includes('/tb/') ||
+    lower.includes('\\tb\\') ||
+    lower.includes('_tb.') ||
+    lower.includes('_test.') ||
+    lower.includes('testbench') ||
+    lower.includes('test_')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export interface FileItem {
   name: string;
   path: string;
@@ -79,6 +99,11 @@ export interface CodeEditorProps {
   /** Increment this value to force a project tree reload (e.g. after agent materializes new files) */
   reloadVersion?: number;
   targetOpenFilePath?: string;
+  topFilePath?: string;
+  onTopFileChange?: (path: string) => void;
+  isAutosaveEnabled?: boolean;
+  onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'idle', text?: string) => void;
+  onAddToAgentContext?: (item: { type: 'code_range' | 'file'; label: string; data: any }) => void;
 }
 
 const DEFAULT_STARTER_FILES: FileItem[] = [
@@ -321,14 +346,30 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   isSplitView = false,
   reloadVersion,
   targetOpenFilePath,
+  topFilePath,
+  onTopFileChange,
+  isAutosaveEnabled = true,
+  onSaveStatusChange,
+  onAddToAgentContext,
 }) => {
-  // Explorer Sidebar State (compact default if in side-by-side split view)
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => !isSplitView);
+  // Explorer Sidebar State (open by default for direct file access)
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [projectTree, setProjectTree] = useState<FileTreeNode[]>([]);
   const [isTreeLoading, setIsTreeLoading] = useState<boolean>(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     () => new Set(['src', 'tb', 'constraints'])
   );
+
+  // Track the designated top design file for the canvas (e.g. 'src/full_adder.vhd')
+  const [internalTopFilePath, setInternalTopFilePath] = useState<string>(
+    topFilePath || 'src/full_adder.vhd'
+  );
+
+  useEffect(() => {
+    if (topFilePath) {
+      setInternalTopFilePath(topFilePath);
+    }
+  }, [topFilePath]);
 
   // Multi-File Project State (Tabs)
   const [files, setFiles] = useState<FileItem[]>(() => {
@@ -338,8 +379,15 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     }
     return initial;
   });
-  const [activeFilePath, setActiveFilePath] = useState<string>('src/full_adder.vhd');
+  const [activeFilePath, setActiveFilePath] = useState<string>(() => {
+    if (activeProjectId) {
+      const saved = localStorage.getItem('circuitforge_active_file_' + activeProjectId);
+      if (saved) return saved;
+    }
+    return 'src/full_adder.vhd';
+  });
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Explorer Modals State
   const [newEntryModal, setNewEntryModal] = useState<{
@@ -372,10 +420,27 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [internalLintMessages, setInternalLintMessages] = useState<Array<{ line: number; severity: string; message: string; rule_id: string }>>([]);
   const [isValidatingMultiLang, setIsValidatingMultiLang] = useState<boolean>(false);
   const editorRef = useRef<any>(null);
+  // Track active project ID to only reset tabs on project switch, not tree refresh
+  const loadedProjectIdRef = useRef<string>('');
+  // Flag to suppress the Monaco onChange callback during programmatic setValue() calls
+  // (prevents canvas→code→synthesize feedback loops and tab switch triggers)
+  const isProgrammaticUpdateRef = useRef<boolean>(false);
 
   // Load Toolchain Status on mount
   useEffect(() => {
     getToolchainStatus().then(setToolchainStatus).catch(() => {});
+  }, []);
+
+  // Safe tab switcher that suppresses spurious Monaco onChange events
+  const handleSelectTab = useCallback((targetPath: string) => {
+    setActiveFilePath((currentActive) => {
+      if (currentActive === targetPath) return currentActive;
+      isProgrammaticUpdateRef.current = true;
+      Promise.resolve().then(() => {
+        isProgrammaticUpdateRef.current = false;
+      });
+      return targetPath;
+    });
   }, []);
 
   // Open file by relative path helper
@@ -383,7 +448,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     async (targetPath: string) => {
       const existing = files.find((f) => f.path === targetPath);
       if (existing) {
-        setActiveFilePath(existing.path);
+        handleSelectTab(existing.path);
         return;
       }
       try {
@@ -397,16 +462,14 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             isDirty: false,
           };
           setFiles((prev) => [...prev, newFile]);
-          setActiveFilePath(targetPath);
-          if (name.endsWith('.vhd')) {
-            onChangeCode(res.content);
-          }
+          handleSelectTab(targetPath);
+          // Note: Opening a file never auto-pushes code to canvas unless explicitly synthesized!
         }
       } catch (err) {
         console.error('Failed to read file from backend:', err);
       }
     },
-    [files, activeProjectId, onChangeCode]
+    [files, activeProjectId, handleSelectTab]
   );
 
   useEffect(() => {
@@ -430,7 +493,24 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           });
           setExpandedFolders(folders);
 
-          // Find first source code file (prioritize src/ and rtl/ directories)
+          // 1. Check if project.json specifies a top_file
+          let designatedTop: string | null = null;
+          const projMetaNode = res.tree.find((n) => n.name === 'project.json');
+          if (projMetaNode) {
+            try {
+              const metaData = await readProjectFile(projId, 'project.json');
+              if (metaData && metaData.content) {
+                const parsed = JSON.parse(metaData.content);
+                if (parsed.top_file) {
+                  designatedTop = parsed.top_file;
+                }
+              }
+            } catch (e) {
+              // ignore parse errors
+            }
+          }
+
+          // 2. Find first design source code file (prioritize src/ and rtl/ directories, exclude testbenches)
           const findFirstFile = (nodes: FileTreeNode[]): FileTreeNode | null => {
             const allFiles: FileTreeNode[] = [];
             const collect = (list: FileTreeNode[]) => {
@@ -444,55 +524,95 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             };
             collect(nodes);
 
-            // 1. Prefer HDL / primary source in src/ or rtl/
+            // Prefer primary RTL HDL in src/ or rtl/ (non-testbench)
             const primarySource = allFiles.find(
               (f) =>
                 (f.path.includes('src/') || f.path.includes('rtl/')) &&
-                (f.name.endsWith('.vhd') ||
-                  f.name.endsWith('.vhdl') ||
-                  f.name.endsWith('.v') ||
-                  f.name.endsWith('.sv') ||
-                  f.name.endsWith('.c') ||
-                  f.name.endsWith('.py') ||
-                  f.name.endsWith('.rs'))
+                isDesignRtlFile(f.path)
             );
             if (primarySource) return primarySource;
 
-            // 2. Any HDL or source code file
-            const anySource = allFiles.find(
-              (f) =>
-                f.name.endsWith('.vhd') ||
-                f.name.endsWith('.vhdl') ||
-                f.name.endsWith('.v') ||
-                f.name.endsWith('.sv') ||
-                f.name.endsWith('.c') ||
-                f.name.endsWith('.py') ||
-                f.name.endsWith('.rs')
-            );
+            // Any design RTL file
+            const anySource = allFiles.find((f) => isDesignRtlFile(f.path));
             if (anySource) return anySource;
 
-            // 3. Any non-meta file
+            // Any non-meta file
             const nonMeta = allFiles.find((f) => !f.name.endsWith('.json') && !f.name.endsWith('.sdc'));
             if (nonMeta) return nonMeta;
 
             return allFiles[0] || null;
           };
 
-          const top = findFirstFile(res.tree);
-          if (top) {
+          const isNewProject = loadedProjectIdRef.current !== projId;
+          loadedProjectIdRef.current = projId;
+
+          const detectedTop = designatedTop || findFirstFile(res.tree)?.path || null;
+          if (detectedTop) {
+            setInternalTopFilePath(detectedTop);
+            onTopFileChange?.(detectedTop);
+
             try {
-              const fileData = await readProjectFile(projId, top.path);
+              const fileData = await readProjectFile(projId, detectedTop);
               if (fileData && fileData.content !== undefined) {
-                setFiles([
-                  {
-                    name: top.name,
-                    path: top.path,
-                    code: fileData.content,
-                    isDirty: false,
-                  },
-                ]);
-                setActiveFilePath(top.path);
-                onChangeCode(fileData.content);
+                const topName = detectedTop.split('/').pop() || detectedTop;
+                let initialCode = fileData.content;
+                if (isAutosaveEnabled) {
+                  const draft = localStorage.getItem(`circuitforge_draft_${projId}_${detectedTop}`);
+                  if (draft !== null) {
+                    initialCode = draft;
+                  }
+                }
+
+                const topItem: FileItem = {
+                  name: topName,
+                  path: detectedTop,
+                  code: initialCode,
+                  isDirty: false,
+                };
+
+                if (isNewProject) {
+                  // Check if there were multiple open tabs saved for this project
+                  const savedTabsRaw = isAutosaveEnabled ? localStorage.getItem('circuitforge_open_tabs_' + projId) : null;
+                  const savedActiveFile = isAutosaveEnabled ? localStorage.getItem('circuitforge_active_file_' + projId) : null;
+                  const restoredFiles: FileItem[] = [topItem];
+
+                  if (savedTabsRaw) {
+                    try {
+                      const tabPaths: string[] = JSON.parse(savedTabsRaw);
+                      const additionalPaths = tabPaths.filter((p) => p !== detectedTop);
+                      for (const addPath of additionalPaths) {
+                        try {
+                          const fileRes = await readProjectFile(projId, addPath);
+                          if (fileRes && fileRes.content !== undefined) {
+                            const fDraft = isAutosaveEnabled ? localStorage.getItem(`circuitforge_draft_${projId}_${addPath}`) : null;
+                            restoredFiles.push({
+                              name: addPath.split('/').pop() || addPath,
+                              path: addPath,
+                              code: fDraft !== null ? fDraft : fileRes.content,
+                              isDirty: false,
+                            });
+                          }
+                        } catch (e) {}
+                      }
+                    } catch (e) {}
+                  }
+
+                  setFiles(restoredFiles);
+                  const activeToSelect = savedActiveFile && restoredFiles.some((f) => f.path === savedActiveFile)
+                    ? savedActiveFile
+                    : detectedTop;
+                  setActiveFilePath(activeToSelect);
+                  // Synchronize design file with canvas on new project load
+                  onChangeCode(initialCode);
+                } else {
+                  setFiles((prev) => {
+                    const exists = prev.some((f) => f.path === detectedTop);
+                    if (!exists) return [topItem, ...prev];
+                    return prev.map((f) =>
+                      f.path === detectedTop ? { ...f, code: initialCode } : f
+                    );
+                  });
+                }
               }
             } catch (err) {
               console.warn('Failed to load initial project file content:', err);
@@ -505,7 +625,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         setIsTreeLoading(false);
       }
     },
-    [onChangeCode]
+    [onChangeCode, onTopFileChange]
   );
 
   // Reload tree when activeProjectId changes
@@ -513,7 +633,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     if (activeProjectId) {
       loadTree(activeProjectId);
     }
-  }, [activeProjectId, loadTree]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
 
   // External reload trigger — fires when parent bumps reloadVersion (e.g. after agent materializes files)
   useEffect(() => {
@@ -523,14 +644,42 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadVersion]);
 
-  // Sync external code prop if editing top file
+  // Sync external code prop (from canvas→code direction)
+  // ONLY updates the designated top design file — NEVER overwrites testbenches, constraints, or other tabs!
   useEffect(() => {
-    if (code && code.trim()) {
-      setFiles((prev) =>
-        prev.map((f) => (f.path === activeFilePath && !f.isDirty ? { ...f, code } : f))
-      );
+    if (!code || !code.trim()) return;
+
+    const currentTop = topFilePath || internalTopFilePath;
+
+    setFiles((prev) =>
+      prev.map((f) => {
+        const isTarget = currentTop
+          ? f.path === currentTop
+          : isDesignRtlFile(f.path) && f.path.includes('src/');
+        if (isTarget) {
+          return { ...f, code, isDirty: false };
+        }
+        return f;
+      })
+    );
+
+    // Only update Monaco editor if the user is currently viewing the top design file!
+    const isViewingTop = currentTop
+      ? activeFilePath === currentTop
+      : isDesignRtlFile(activeFilePath) && activeFilePath.includes('src/');
+
+    if (isViewingTop && editorRef.current && editorRef.current.getValue() !== code) {
+      const pos = editorRef.current.getPosition();
+      isProgrammaticUpdateRef.current = true;
+      editorRef.current.setValue(code);
+      Promise.resolve().then(() => {
+        isProgrammaticUpdateRef.current = false;
+      });
+      if (pos) {
+        editorRef.current.setPosition(pos);
+      }
     }
-  }, [code, activeFilePath]);
+  }, [code, topFilePath, internalTopFilePath, activeFilePath]);
 
   // Toggle Folder Expansion
   const toggleFolder = (folderPath: string) => {
@@ -547,9 +696,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
   // Open file in editor (from tree click)
   const handleOpenFileFromTree = async (node: FileTreeNode) => {
+    if (node.is_dir) return;
     const existing = files.find((f) => f.path === node.path);
     if (existing) {
-      setActiveFilePath(existing.path);
+      handleSelectTab(existing.path);
       return;
     }
 
@@ -562,11 +712,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           code: res.content,
           isDirty: false,
         };
-        setFiles((prev) => [...prev, newFile]);
-        setActiveFilePath(node.path);
-        if (node.name.endsWith('.vhd')) {
-          onChangeCode(res.content);
-        }
+        setFiles((prev) => {
+          const updated = [...prev.filter((f) => f.path !== newFile.path), newFile];
+          return updated;
+        });
+        handleSelectTab(node.path);
       }
     } catch (err) {
       console.error('Failed to read file from backend:', err);
@@ -579,17 +729,40 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     const remaining = files.filter((f) => f.path !== filePath);
     setFiles(remaining);
     if (activeFilePath === filePath) {
-      setActiveFilePath(remaining[0].path);
+      handleSelectTab(remaining[0].path);
     }
   };
 
-  // Monaco editor change handler
+  // Monaco editor change handler — only forwards user edits to App.tsx, not programmatic updates
   const handleEditorChange = (newCode: string) => {
     setFiles((prev) =>
       prev.map((f) => (f.path === activeFilePath ? { ...f, code: newCode, isDirty: true } : f))
     );
-    const cur = files.find((f) => f.path === activeFilePath);
-    if (cur && cur.name.endsWith('.vhd')) {
+    // Skip onChangeCode if this is a programmatic setValue() or tab switch
+    if (isProgrammaticUpdateRef.current) return;
+
+    if (isAutosaveEnabled && activeProjectId && activeFilePath) {
+      try {
+        localStorage.setItem(`circuitforge_draft_${activeProjectId}_${activeFilePath}`, newCode);
+      } catch (e) {}
+      onSaveStatusChange?.('dirty', 'Unsaved edits');
+
+      // Debounce automatic save to backend filesystem (1200ms)
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = setTimeout(() => {
+        handleSaveActiveFile();
+      }, 1200);
+    } else {
+      onSaveStatusChange?.('dirty', 'Unsaved edits');
+    }
+
+    // ONLY auto-sync with the schematic canvas if the file currently being edited is the top RTL design file!
+    const currentTop = topFilePath || internalTopFilePath;
+    const isTopDesignFile = currentTop
+      ? activeFilePath === currentTop
+      : isDesignRtlFile(activeFilePath) && activeFilePath.includes('src/');
+
+    if (isTopDesignFile) {
       onChangeCode(newCode);
     }
   };
@@ -600,27 +773,74 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     if (!cur) return;
 
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
+    onSaveStatusChange?.('saving', 'Saving...');
 
     try {
       await writeProjectFile(activeProjectId, cur.path, currentCode);
+      if (activeProjectId && cur.path) {
+        try {
+          localStorage.removeItem(`circuitforge_draft_${activeProjectId}_${cur.path}`);
+        } catch (e) {}
+      }
       setFiles((prev) =>
         prev.map((f) => (f.path === cur.path ? { ...f, code: currentCode, isDirty: false } : f))
       );
-      if (cur.name.endsWith('.vhd')) {
+      const currentTop = topFilePath || internalTopFilePath;
+      const isTopDesignFile = currentTop
+        ? cur.path === currentTop
+        : isDesignRtlFile(cur.path) && cur.path.includes('src/');
+      if (isTopDesignFile) {
         onChangeCode(currentCode);
       }
       setSaveStatus(`Saved ${cur.name}`);
+      onSaveStatusChange?.('saved', 'All saved');
       setTimeout(() => setSaveStatus(null), 2500);
     } catch (err) {
       console.error('Save failed:', err);
-      // Fallback local save
+      // Fallback local save in draft
       setFiles((prev) =>
         prev.map((f) => (f.path === cur.path ? { ...f, code: currentCode, isDirty: false } : f))
       );
       setSaveStatus(`Saved (Local)`);
+      onSaveStatusChange?.('saved', 'Saved (Local)');
       setTimeout(() => setSaveStatus(null), 2500);
     }
   };
+
+  // Persist open tabs and active file to localStorage
+  useEffect(() => {
+    if (!isAutosaveEnabled || !activeProjectId) return;
+    try {
+      localStorage.setItem('circuitforge_active_file_' + activeProjectId, activeFilePath);
+      localStorage.setItem(
+        'circuitforge_open_tabs_' + activeProjectId,
+        JSON.stringify(files.map((f) => f.path))
+      );
+    } catch (e) {}
+  }, [files, activeFilePath, isAutosaveEnabled, activeProjectId]);
+
+  // Window beforeunload safety listener
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const anyDirty = files.some((f) => f.isDirty);
+      if (isAutosaveEnabled) {
+        // Synchronously save drafts of all dirty open files into localStorage
+        files.forEach((f) => {
+          if (f.isDirty) {
+            try {
+              localStorage.setItem(`circuitforge_draft_${activeProjectId}_${f.path}`, f.code);
+            } catch (err) {}
+          }
+        });
+      } else if (anyDirty) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [files, activeProjectId, isAutosaveEnabled]);
 
   // Keyboard shortcut: Ctrl+S or Cmd+S
   useEffect(() => {
@@ -760,9 +980,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const handleSynthesizeClick = () => {
     const cur = files.find((f) => f.path === activeFilePath) || files[0];
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
-    if (cur.name.endsWith('.vhd')) {
-      onChangeCode(currentCode);
+    if (cur) {
+      setInternalTopFilePath(cur.path);
+      onTopFileChange?.(cur.path);
     }
+    onChangeCode(currentCode);
     onSynthesizeAndSimulate(currentCode);
   };
 
@@ -899,7 +1121,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             return (
               <div
                 key={file.path}
-                onClick={() => setActiveFilePath(file.path)}
+                onClick={() => handleSelectTab(file.path)}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs font-mono cursor-pointer border-t-2 transition flex-shrink-0 ${
                   isActive
                     ? 'bg-slate-950 border-purple-500 text-slate-100 font-bold shadow'
@@ -1043,6 +1265,43 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             <span className="hidden sm:inline">{isLinting || isValidatingMultiLang ? 'Validating...' : isHdl ? 'DRC Lint' : 'Validate'}</span>
           </button>
 
+          {onAddToAgentContext && (
+            <button
+              onClick={() => {
+                if (editorRef.current) {
+                  const selection = editorRef.current.getSelection();
+                  const model = editorRef.current.getModel();
+                  if (selection && !selection.isEmpty() && model) {
+                    const selectedText = model.getValueInRange(selection);
+                    onAddToAgentContext({
+                      type: 'code_range',
+                      label: `${activeFile?.name || 'code'}:${selection.startLineNumber}-${selection.endLineNumber}`,
+                      data: {
+                        filePath: activeFile?.path,
+                        startLine: selection.startLineNumber,
+                        endLine: selection.endLineNumber,
+                        text: selectedText,
+                      },
+                    });
+                    return;
+                  }
+                }
+                if (activeFile) {
+                  onAddToAgentContext({
+                    type: 'file',
+                    label: activeFile.name,
+                    data: { path: activeFile.path, code: activeFile.code.slice(0, 1200) },
+                  });
+                }
+              }}
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 text-xs font-semibold shadow-sm transition cursor-pointer"
+              title="Attach highlighted code range (or active file) to EDA Copilot context"
+            >
+              <Bot className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden sm:inline">Add to Agent</span>
+            </button>
+          )}
+
           {isHdl && (
             <button
               onClick={handleSynthesizeClick}
@@ -1166,6 +1425,37 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
               beforeMount={handleEditorWillMount}
               onMount={(editor) => {
                 editorRef.current = editor;
+                if (onAddToAgentContext) {
+                  editor.addAction({
+                    id: 'circuitforge-add-agent-context',
+                    label: '📎 Add to Agent Context (EDA Copilot)',
+                    contextMenuGroupId: 'navigation',
+                    contextMenuOrder: 1.2,
+                    run: (ed: any) => {
+                      const sel = ed.getSelection();
+                      const model = ed.getModel();
+                      if (sel && !sel.isEmpty() && model) {
+                        const txt = model.getValueInRange(sel);
+                        onAddToAgentContext({
+                          type: 'code_range',
+                          label: `${activeFile?.name || 'code'}:${sel.startLineNumber}-${sel.endLineNumber}`,
+                          data: {
+                            filePath: activeFile?.path,
+                            startLine: sel.startLineNumber,
+                            endLine: sel.endLineNumber,
+                            text: txt,
+                          },
+                        });
+                      } else if (activeFile) {
+                        onAddToAgentContext({
+                          type: 'file',
+                          label: activeFile.name,
+                          data: { path: activeFile.path, code: activeFile.code.slice(0, 1200) },
+                        });
+                      }
+                    },
+                  });
+                }
               }}
               onChange={(val) => handleEditorChange(val || '')}
               options={{

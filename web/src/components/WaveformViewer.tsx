@@ -21,9 +21,10 @@ import { WaveformData, SimulationSummary, WaveformSignal } from '../types/circui
 interface WaveformViewerProps {
   waveform: WaveformData | null;
   summary: SimulationSummary | null;
+  onAddToAgentContext?: (item: { type: 'wire' | 'custom'; label: string; data: any }) => void;
 }
 
-export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summary }) => {
+export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summary, onAddToAgentContext }) => {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [cursorA, setCursorA] = useState<number | null>(10);
   const [cursorB, setCursorB] = useState<number | null>(35);
@@ -400,19 +401,42 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                       </div>
                     </div>
                   </div>
-                  {currentVal !== null && (
-                    <span
-                      className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded border ${
-                        signal.width === 1
-                          ? currentVal === '1'
-                            ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
-                            : 'bg-slate-900 border-slate-800 text-slate-400'
-                          : 'bg-purple-950/80 border-purple-700 text-purple-300'
-                      }`}
-                    >
-                      {signal.width > 1 ? formatBusValue(currentVal) : currentVal}
-                    </span>
-                  )}
+                  <div className="flex items-center space-x-1 flex-shrink-0">
+                    {onAddToAgentContext && (
+                      <button
+                        onClick={() => {
+                          onAddToAgentContext({
+                            type: 'wire',
+                            label: `Sig:${signal.name}`,
+                            data: {
+                              name: signal.name,
+                              width: signal.width,
+                              is_clock: signal.is_clock,
+                              transitions_count: signal.transitions?.length || 0,
+                              current_val: currentVal,
+                            },
+                          });
+                        }}
+                        className="p-1 rounded bg-slate-900 hover:bg-purple-950/80 border border-slate-800 hover:border-purple-600/60 text-slate-500 hover:text-purple-300 text-[9px] transition cursor-pointer"
+                        title={`Add signal '${signal.name}' waveform state to EDA Copilot context`}
+                      >
+                        + Context
+                      </button>
+                    )}
+                    {currentVal !== null && (
+                      <span
+                        className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded border ${
+                          signal.width === 1
+                            ? currentVal === '1'
+                              ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
+                              : 'bg-slate-900 border-slate-800 text-slate-400'
+                            : 'bg-purple-950/80 border-purple-700 text-purple-300'
+                        }`}
+                      >
+                        {signal.width > 1 ? formatBusValue(currentVal) : currentVal}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Wave Canvas Track */}

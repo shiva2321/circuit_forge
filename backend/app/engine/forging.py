@@ -197,14 +197,14 @@ class ForgingEngine:
 
         # 8-Zone Reflow Oven Temperature Profile
         reflow_zones = [
-            {"zone": 1, "name": "Preheat Initial", "target_temp_c": 120.0, "duration_sec": 30},
-            {"zone": 2, "name": "Preheat Ramp", "target_temp_c": 150.0, "duration_sec": 30},
-            {"zone": 3, "name": "Thermal Soak Entry", "target_temp_c": 175.0, "duration_sec": 35},
-            {"zone": 4, "name": "Thermal Soak Peak", "target_temp_c": 195.0, "duration_sec": 35},
-            {"zone": 5, "name": "Reflow Ramp", "target_temp_c": 225.0, "duration_sec": 25},
-            {"zone": 6, "name": "Peak Spike", "target_temp_c": peak_temp_c, "duration_sec": 25},
-            {"zone": 7, "name": "Cooling Zone 1", "target_temp_c": 180.0, "duration_sec": 25},
-            {"zone": 8, "name": "Final Exit Chill", "target_temp_c": 60.0, "duration_sec": 30}
+            {"zone": 1, "name": "Preheat Initial", "zone_name": "Preheat Initial", "target_temp_c": 120.0, "setpoint_temp_c": 120.0, "duration_sec": 30},
+            {"zone": 2, "name": "Preheat Ramp", "zone_name": "Preheat Ramp", "target_temp_c": 150.0, "setpoint_temp_c": 150.0, "duration_sec": 30},
+            {"zone": 3, "name": "Thermal Soak Entry", "zone_name": "Thermal Soak Entry", "target_temp_c": 175.0, "setpoint_temp_c": 175.0, "duration_sec": 35},
+            {"zone": 4, "name": "Thermal Soak Peak", "zone_name": "Thermal Soak Peak", "target_temp_c": 195.0, "setpoint_temp_c": 195.0, "duration_sec": 35},
+            {"zone": 5, "name": "Reflow Ramp", "zone_name": "Reflow Ramp", "target_temp_c": 225.0, "setpoint_temp_c": 225.0, "duration_sec": 25},
+            {"zone": 6, "name": "Peak Spike", "zone_name": "Peak Spike", "target_temp_c": peak_temp_c, "setpoint_temp_c": peak_temp_c, "duration_sec": 25},
+            {"zone": 7, "name": "Cooling Zone 1", "zone_name": "Cooling Zone 1", "target_temp_c": 180.0, "setpoint_temp_c": 180.0, "duration_sec": 25},
+            {"zone": 8, "name": "Final Exit Chill", "zone_name": "Final Exit Chill", "target_temp_c": 60.0, "setpoint_temp_c": 60.0, "duration_sec": 30}
         ]
 
         return {

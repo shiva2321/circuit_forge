@@ -113,6 +113,11 @@ class HFIngestRequest(BaseModel):
     max_samples: int = 10
 
 class AgentChatRequest(BaseModel):
+    """
+    Request model for autonomous EDA copilot interactions.
+    Supports rich circuit context including live netlist, active VHDL,
+    DRC diagnostics, simulation telemetry, user selection, and attached chips.
+    """
     message: str
     circuit_context: Optional[Dict[str, Any]] = None
     openrouter_key: Optional[str] = None
@@ -195,6 +200,7 @@ def get_status():
     return {
         "status": "online",
         "agent_state": agent.state.value,
+        "current_phase": agent.current_phase,
         "kg_nodes": kg.graph.number_of_nodes(),
         "kg_edges": kg.graph.number_of_edges(),
     }
@@ -389,10 +395,13 @@ async def materialize_design(req: MaterializeRequest):
 
 @app.post("/api/agent/chat")
 async def chat_with_agent(req: AgentChatRequest):
+    from backend.app.agent.openrouter import sanitize_credentials
     key = req.openrouter_key or openrouter_client.api_key
     model = req.model or openrouter_client.default_model
 
-    # Broadcast user chat message to WebSocket
+    clean_user_message = sanitize_credentials(req.message)
+
+    # Broadcast user chat message to WebSocket safely
     await global_bus.broadcast({
         "type": "agent_thought",
         "timestamp": time.time(),
@@ -400,7 +409,7 @@ async def chat_with_agent(req: AgentChatRequest):
             "time": time.time(),
             "state": "CO-PILOT",
             "action": "user_chat",
-            "thought": f"Human Co-Pilot: '{req.message}'"
+            "thought": f"Human Co-Pilot: '{clean_user_message}'"
         }
     })
 
@@ -413,7 +422,9 @@ async def chat_with_agent(req: AgentChatRequest):
         project_id=req.project_id
     )
 
-    # Broadcast agent response to WebSocket
+    clean_reply = sanitize_credentials(res.get("reply", ""))
+
+    # Broadcast agent response to WebSocket safely
     await global_bus.broadcast({
         "type": "agent_thought",
         "timestamp": time.time(),
@@ -421,7 +432,7 @@ async def chat_with_agent(req: AgentChatRequest):
             "time": time.time(),
             "state": "CO-PILOT",
             "action": "agent_reply",
-            "thought": res.get("reply", ""),
+            "thought": clean_reply,
             "details": {
                 "model": res.get("model"),
                 "action": res.get("action"),

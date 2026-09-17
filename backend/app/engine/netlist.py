@@ -38,6 +38,11 @@ class NetlistNode:
     properties: Dict[str, Any] = field(default_factory=dict)
     has_subgraph: bool = False
     subgraph_ref: Optional[str] = None
+    source_file: Optional[str] = None
+    source_module: Optional[str] = None
+    color_group: Optional[str] = None
+    parent_instance: Optional[str] = None
+    diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
 @dataclass
 class NetlistWire:
@@ -49,6 +54,12 @@ class NetlistWire:
     width: int = 1
     label: Optional[str] = None
     points: List[List[float]] = field(default_factory=list)
+    is_inherited: bool = False
+    parent_port: Optional[str] = None
+    child_port: Optional[str] = None
+    source_file: Optional[str] = None
+    has_conflict: bool = False
+    conflict_reason: Optional[str] = None
 
 @dataclass
 class NetlistGraph:
@@ -60,6 +71,7 @@ class NetlistGraph:
     nodes: List[NetlistNode] = field(default_factory=list)
     wires: List[NetlistWire] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -71,6 +83,7 @@ class NetlistGraph:
             'nodes': [asdict(n) for n in self.nodes],
             'wires': [asdict(w) for w in self.wires],
             'metadata': self.metadata,
+            'diagnostics': self.diagnostics,
         }
 
 class NetlistCatalog:
@@ -96,48 +109,68 @@ class NetlistCatalog:
                     id='xor1', label='XOR1', type='GATE', scale=1, x=220, y=80, width=100, height=80,
                     inputs=[PortDef('in_0', 'A', 'in'), PortDef('in_1', 'B', 'in')],
                     outputs=[PortDef('out', 'S1', 'out')],
-                    properties={'gate_type': 'XOR'}
+                    properties={'gate_type': 'XOR'},
+                    source_file='half_adder.vhd',
+                    source_module='half_adder',
+                    color_group='half_adder',
+                    parent_instance='HA1'
                 ),
                 NetlistNode(
                     id='xor2', label='XOR2 (Sum)', type='GATE', scale=1, x=460, y=80, width=100, height=80,
                     inputs=[PortDef('in_0', 'S1', 'in'), PortDef('in_1', 'Cin', 'in')],
                     outputs=[PortDef('out', 'Sum', 'out')],
-                    properties={'gate_type': 'XOR'}
+                    properties={'gate_type': 'XOR'},
+                    source_file='half_adder.vhd',
+                    source_module='half_adder',
+                    color_group='half_adder',
+                    parent_instance='HA2'
                 ),
                 NetlistNode(
                     id='and1', label='AND1', type='GATE', scale=1, x=220, y=220, width=100, height=80,
                     inputs=[PortDef('in_0', 'A', 'in'), PortDef('in_1', 'B', 'in')],
                     outputs=[PortDef('out', 'C1', 'out')],
-                    properties={'gate_type': 'AND'}
+                    properties={'gate_type': 'AND'},
+                    source_file='half_adder.vhd',
+                    source_module='half_adder',
+                    color_group='half_adder',
+                    parent_instance='HA1'
                 ),
                 NetlistNode(
                     id='and2', label='AND2', type='GATE', scale=1, x=460, y=220, width=100, height=80,
                     inputs=[PortDef('in_0', 'Cin', 'in'), PortDef('in_1', 'S1', 'in')],
                     outputs=[PortDef('out', 'C2', 'out')],
-                    properties={'gate_type': 'AND'}
+                    properties={'gate_type': 'AND'},
+                    source_file='half_adder.vhd',
+                    source_module='half_adder',
+                    color_group='half_adder',
+                    parent_instance='HA2'
                 ),
                 NetlistNode(
                     id='or1', label='OR1 (Cout)', type='GATE', scale=1, x=700, y=220, width=100, height=80,
                     inputs=[PortDef('in_0', 'C1', 'in'), PortDef('in_1', 'C2', 'in')],
                     outputs=[PortDef('out', 'Cout', 'out')],
-                    properties={'gate_type': 'OR'}
+                    properties={'gate_type': 'OR'},
+                    source_file='full_adder.vhd',
+                    source_module='full_adder',
+                    color_group='full_adder',
+                    parent_instance='FA_TOP'
                 ),
             ],
             wires=[
-                NetlistWire('w1', 'in_A', 'A', 'xor1', 'in_0', label='A'),
-                NetlistWire('w2', 'in_B', 'B', 'xor1', 'in_1', label='B'),
-                NetlistWire('w3', 'xor1', 'out', 'xor2', 'in_0', label='S1'),
-                NetlistWire('w4', 'in_Cin', 'Cin', 'xor2', 'in_1', label='Cin'),
-                NetlistWire('w5', 'xor2', 'out', 'out_Sum', 'Sum', label='Sum'),
-                NetlistWire('w6', 'in_A', 'A', 'and1', 'in_0', label='A'),
-                NetlistWire('w7', 'in_B', 'B', 'and1', 'in_1', label='B'),
-                NetlistWire('w8', 'in_Cin', 'Cin', 'and2', 'in_0', label='Cin'),
-                NetlistWire('w9', 'xor1', 'out', 'and2', 'in_1', label='S1'),
-                NetlistWire('w10', 'and1', 'out', 'or1', 'in_0', label='C1'),
-                NetlistWire('w11', 'and2', 'out', 'or1', 'in_1', label='C2'),
-                NetlistWire('w12', 'or1', 'out', 'out_Cout', 'Cout', label='Cout'),
+                NetlistWire('w1', 'in_A', 'A', 'xor1', 'in_0', label='A', is_inherited=True, parent_port='A', child_port='in_0', source_file='full_adder.vhd'),
+                NetlistWire('w2', 'in_B', 'B', 'xor1', 'in_1', label='B', is_inherited=True, parent_port='B', child_port='in_1', source_file='full_adder.vhd'),
+                NetlistWire('w3', 'xor1', 'out', 'xor2', 'in_0', label='S1', source_file='full_adder.vhd'),
+                NetlistWire('w4', 'in_Cin', 'Cin', 'xor2', 'in_1', label='Cin', is_inherited=True, parent_port='Cin', child_port='in_1', source_file='full_adder.vhd'),
+                NetlistWire('w5', 'xor2', 'out', 'out_Sum', 'Sum', label='Sum', is_inherited=True, parent_port='Sum', child_port='out', source_file='full_adder.vhd'),
+                NetlistWire('w6', 'in_A', 'A', 'and1', 'in_0', label='A', is_inherited=True, parent_port='A', child_port='in_0', source_file='full_adder.vhd'),
+                NetlistWire('w7', 'in_B', 'B', 'and1', 'in_1', label='B', is_inherited=True, parent_port='B', child_port='in_1', source_file='full_adder.vhd'),
+                NetlistWire('w8', 'in_Cin', 'Cin', 'and2', 'in_0', label='Cin', is_inherited=True, parent_port='Cin', child_port='in_0', source_file='full_adder.vhd'),
+                NetlistWire('w9', 'xor1', 'out', 'and2', 'in_1', label='S1', source_file='full_adder.vhd'),
+                NetlistWire('w10', 'and1', 'out', 'or1', 'in_0', label='C1', source_file='full_adder.vhd'),
+                NetlistWire('w11', 'and2', 'out', 'or1', 'in_1', label='C2', source_file='full_adder.vhd'),
+                NetlistWire('w12', 'or1', 'out', 'out_Cout', 'Cout', label='Cout', is_inherited=True, parent_port='Cout', child_port='out', source_file='full_adder.vhd'),
             ],
-            metadata={'transistor_count': 28, 'critical_path_gates': 3}
+            metadata={'transistor_count': 28, 'critical_path_gates': 3, 'submodules': ['half_adder.vhd', 'full_adder.vhd']}
         )
         return g
 
@@ -169,6 +202,10 @@ class NetlistCatalog:
                         PortDef('sel', 'ctrl', 'in', 2),
                     ],
                     outputs=[PortDef('out_next', 'd_next', 'out', 8)],
+                    source_file='counter_mux.vhd',
+                    source_module='counter_mux',
+                    color_group='counter_mux',
+                    parent_instance='MUX1'
                 ),
                 NetlistNode(
                     id='reg_state', label='8-bit State Register', type='REG', scale=2, x=480, y=80, width=180, height=120,
@@ -179,43 +216,59 @@ class NetlistCatalog:
                     ],
                     outputs=[PortDef('q', 'q_out', 'out', 8)],
                     has_subgraph=True,
-                    subgraph_ref='scale1_reg8'
+                    subgraph_ref='scale1_reg8',
+                    source_file='state_register.vhd',
+                    source_module='state_register',
+                    color_group='state_register',
+                    parent_instance='REG1'
                 ),
                 NetlistNode(
                     id='inc_block', label='+1 Adder', type='ADDER', scale=2, x=220, y=260, width=180, height=80,
                     inputs=[PortDef('a', 'q', 'in', 8)],
                     outputs=[PortDef('out', 'q_plus_1', 'out', 8)],
                     has_subgraph=True,
-                    subgraph_ref='full_adder_gate_level'
+                    subgraph_ref='full_adder_gate_level',
+                    source_file='incrementer.vhd',
+                    source_module='incrementer',
+                    color_group='incrementer',
+                    parent_instance='INC1'
                 ),
                 NetlistNode(
                     id='dec_block', label='-1 Subtractor', type='ADDER', scale=2, x=220, y=380, width=180, height=80,
                     inputs=[PortDef('a', 'q', 'in', 8)],
                     outputs=[PortDef('out', 'q_minus_1', 'out', 8)],
+                    source_file='decrementer.vhd',
+                    source_module='decrementer',
+                    color_group='decrementer',
+                    parent_instance='DEC1'
                 ),
                 NetlistNode(
                     id='tc_detect', label='Terminal Count Detector', type='GATE', scale=2, x=740, y=80, width=220, height=100,
                     inputs=[PortDef('q', 'q_val', 'in', 8), PortDef('up_down', 'dir', 'in', 1)],
                     outputs=[PortDef('tc', 'tc', 'out', 1)],
+                    source_file='terminal_count.vhd',
+                    source_module='terminal_count',
+                    color_group='terminal_count',
+                    parent_instance='TC1'
                 ),
             ],
             wires=[
-                NetlistWire('w1', 'in_d_in', 'd_in', 'mux_next', 'in_load_val', width=8, label='d_in[7:0]'),
-                NetlistWire('w2', 'in_load', 'load', 'mux_next', 'sel', width=1, label='load'),
-                NetlistWire('w3', 'reg_state', 'q', 'mux_next', 'in_hold', width=8, label='hold[7:0]'),
-                NetlistWire('w4', 'mux_next', 'out_next', 'reg_state', 'd', width=8, label='next_q[7:0]'),
-                NetlistWire('w5', 'in_clk', 'clk', 'reg_state', 'clk', width=1, label='clk'),
-                NetlistWire('w6', 'in_rst', 'rst', 'reg_state', 'rst', width=1, label='rst'),
-                NetlistWire('w7', 'reg_state', 'q', 'out_q', 'q', width=8, label='q[7:0]'),
-                NetlistWire('w8', 'reg_state', 'q', 'inc_block', 'a', width=8, label='q[7:0]'),
-                NetlistWire('w9', 'reg_state', 'q', 'dec_block', 'a', width=8, label='q[7:0]'),
-                NetlistWire('w10', 'inc_block', 'out', 'mux_next', 'in_inc', width=8, label='q+1'),
-                NetlistWire('w11', 'dec_block', 'out', 'mux_next', 'in_dec', width=8, label='q-1'),
-                NetlistWire('w12', 'reg_state', 'q', 'tc_detect', 'q', width=8, label='q[7:0]'),
-                NetlistWire('w13', 'in_up_down', 'up_down', 'tc_detect', 'up_down', width=1, label='dir'),
-                NetlistWire('w14', 'tc_detect', 'tc', 'out_tc', 'tc', width=1, label='tc'),
+                NetlistWire('w1', 'in_d_in', 'd_in', 'mux_next', 'in_load_val', width=8, label='d_in[7:0]', is_inherited=True, parent_port='d_in', child_port='in_load_val', source_file='counter_top.vhd'),
+                NetlistWire('w2', 'in_load', 'load', 'mux_next', 'sel', width=1, label='load', is_inherited=True, parent_port='load', child_port='sel', source_file='counter_top.vhd'),
+                NetlistWire('w3', 'reg_state', 'q', 'mux_next', 'in_hold', width=8, label='hold[7:0]', source_file='counter_top.vhd'),
+                NetlistWire('w4', 'mux_next', 'out_next', 'reg_state', 'd', width=8, label='next_q[7:0]', source_file='counter_top.vhd'),
+                NetlistWire('w5', 'in_clk', 'clk', 'reg_state', 'clk', width=1, label='clk', is_inherited=True, parent_port='clk', child_port='clk', source_file='counter_top.vhd'),
+                NetlistWire('w6', 'in_rst', 'rst', 'reg_state', 'rst', width=1, label='rst', is_inherited=True, parent_port='rst', child_port='rst', source_file='counter_top.vhd'),
+                NetlistWire('w7', 'reg_state', 'q', 'out_q', 'q', width=8, label='q[7:0]', is_inherited=True, parent_port='q', child_port='out', source_file='counter_top.vhd'),
+                NetlistWire('w8', 'reg_state', 'q', 'inc_block', 'a', width=8, label='q[7:0]', source_file='counter_top.vhd'),
+                NetlistWire('w9', 'reg_state', 'q', 'dec_block', 'a', width=8, label='q[7:0]', source_file='counter_top.vhd'),
+                NetlistWire('w10', 'inc_block', 'out', 'mux_next', 'in_inc', width=8, label='q+1', source_file='counter_top.vhd'),
+                NetlistWire('w11', 'dec_block', 'out', 'mux_next', 'in_dec', width=8, label='q-1', source_file='counter_top.vhd'),
+                NetlistWire('w12', 'reg_state', 'q', 'tc_detect', 'q', width=8, label='q[7:0]', source_file='counter_top.vhd'),
+                NetlistWire('w13', 'in_up_down', 'up_down', 'tc_detect', 'up_down', width=1, label='dir', is_inherited=True, parent_port='up_down', child_port='up_down', source_file='counter_top.vhd'),
+                NetlistWire('w14', 'tc_detect', 'tc', 'out_tc', 'tc', width=1, label='tc', is_inherited=True, parent_port='tc', child_port='out', source_file='counter_top.vhd'),
             ],
-            metadata={'flip_flop_count': 8, 'gate_count': 94}
+            metadata={'flip_flop_count': 8, 'gate_count': 94, 'submodules': ['counter_mux.vhd', 'state_register.vhd', 'incrementer.vhd', 'decrementer.vhd', 'terminal_count.vhd']}
         )
         return g
 

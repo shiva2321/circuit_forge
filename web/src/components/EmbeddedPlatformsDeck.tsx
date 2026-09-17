@@ -44,8 +44,21 @@ export const EmbeddedPlatformsDeck: React.FC<EmbeddedPlatformsDeckProps> = ({
   onOpenFileInEditor,
 }) => {
   const [catalog, setCatalog] = useState<any>(null);
-  const [selectedPlatformId, setSelectedPlatformId] = useState<string>('esp32_s3');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('c_cpp');
+  const [selectedPlatformId, setSelectedPlatformId] = useState<string>(() => {
+    return localStorage.getItem('circuitforge_embedded_platform') || 'esp32_s3';
+  });
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
+    return localStorage.getItem('circuitforge_embedded_lang') || 'c_cpp';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('circuitforge_embedded_platform', selectedPlatformId);
+  }, [selectedPlatformId]);
+
+  useEffect(() => {
+    localStorage.setItem('circuitforge_embedded_lang', selectedLanguage);
+  }, [selectedLanguage]);
+
   const [projectName, setProjectName] = useState<string>('iot_sensor_gateway');
   const [generatedData, setGeneratedData] = useState<any>(null);
   const [selectedFile, setSelectedFile] = useState<string>('');

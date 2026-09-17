@@ -2125,13 +2125,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   const renderNodeSymbol = (node: NetlistNode, w: number, h: number) => {
     const isSelected = selectedNode?.id === node.id;
     const gateType = (node.properties?.gate_type || node.type || '').toUpperCase();
-    const fillVal = isSelected ? '#3b0764' : '#0f172a';
-    const strokeVal = isSelected ? '#c084fc' : '#94a3b8';
+    const fillVal = isSelected ? '#083344' : '#0f172a';
+    const strokeVal = isSelected ? '#22d3ee' : '#94a3b8';
     const strokeWidthVal = isSelected ? 2.5 : 1.75;
     const strokeClass = isSelected
-      ? 'stroke-purple-400 stroke-[2.5]'
+      ? 'stroke-cyan-400 stroke-[2.5]'
       : 'stroke-slate-400 stroke-[1.75]';
-    const fillClass = isSelected ? 'fill-purple-950/80' : 'fill-slate-900/90';
+    const fillClass = isSelected ? 'fill-cyan-950/80' : 'fill-slate-900/90';
 
     if (gateType === 'AND') {
       return (
@@ -2805,7 +2805,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         <button
           onClick={() => setShowGrid((g) => !g)}
           className={`p-1.5 rounded-lg transition cursor-pointer ${
-            showGrid ? 'bg-purple-600/30 text-purple-300' : 'text-slate-400 hover:bg-slate-800'
+            showGrid ? 'bg-teal-500/20 text-teal-300' : 'text-slate-400 hover:bg-slate-800'
           }`}
           title="Toggle 20px Grid"
         >
@@ -2814,7 +2814,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         <button
           onClick={() => setSnapToGrid((s) => !s)}
           className={`p-1.5 rounded-lg transition cursor-pointer ${
-            snapToGrid ? 'bg-purple-600/30 text-purple-300' : 'text-slate-400 hover:bg-slate-800'
+            snapToGrid ? 'bg-teal-500/20 text-teal-300' : 'text-slate-400 hover:bg-slate-800'
           }`}
           title="Snap to 20px Grid"
         >
@@ -2828,8 +2828,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           onClick={() => setIsPaletteOpen(!isPaletteOpen)}
           className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center space-x-1 transition cursor-pointer ${
             isPaletteOpen
-              ? 'bg-purple-600 text-white shadow-lg'
-              : 'bg-purple-950/80 hover:bg-purple-900 border border-purple-600/50 text-purple-300'
+              ? 'bg-gradient-to-r from-teal-500 via-cyan-500 to-blue-600 text-white shadow-lg shadow-teal-500/20'
+              : 'bg-teal-950/80 hover:bg-teal-900 border border-teal-500/50 text-teal-300'
           }`}
           title="Open Component Library Palette"
         >
@@ -2842,7 +2842,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           className="px-2 py-1 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white text-xs font-semibold flex items-center space-x-1 transition cursor-pointer"
           title="Auto-Organize Components Topologically on Grid"
         >
-          <LayoutGrid className="w-3.5 h-3.5 text-purple-400" />
+          <LayoutGrid className="w-3.5 h-3.5 text-teal-400" />
           <span className="hidden md:inline">Auto-Organize</span>
         </button>
 
@@ -2872,20 +2872,20 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
         <div className="h-4 w-px bg-slate-700/80" />
 
-        {/* Multi-File Origin Shading Legend Dropdown Toggle */}
+        {/* File Origins Filter Pill / Legend Toggle */}
         <div className="relative">
           <button
             onClick={() => setIsFileLegendOpen(!isFileLegendOpen)}
             className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer ${
               isFileLegendOpen
-                ? 'bg-purple-900/90 text-purple-200 border border-purple-500 shadow-md'
+                ? 'bg-slate-800 text-teal-200 border border-teal-500 shadow-md'
                 : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700'
             }`}
             title="Toggle Multi-File Component Shading Legend & Module Hierarchy"
           >
-            <Layers className="w-3.5 h-3.5 text-purple-400" />
+            <Layers className="w-3.5 h-3.5 text-teal-400" />
             <span className="hidden lg:inline">File Origins</span>
-            <span className="px-1.5 py-0.2 rounded-full bg-purple-950 border border-purple-800 text-[10px] text-purple-300 font-mono">
+            <span className="px-1.5 py-0.2 rounded-full bg-teal-950 border border-teal-800 text-[10px] text-teal-300 font-mono">
               {fileOriginsList.length}
             </span>
           </button>
@@ -2894,10 +2894,10 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           {isFileLegendOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setIsFileLegendOpen(false)} />
-              <div className="absolute top-10 left-0 z-50 w-72 p-2.5 rounded-xl bg-slate-900/95 border border-purple-700/60 shadow-2xl backdrop-blur-md space-y-2 text-xs animate-fade-in">
+              <div className="absolute top-10 left-0 z-50 w-72 p-2.5 rounded-xl bg-slate-900/95 border border-teal-500/50 shadow-2xl backdrop-blur-md space-y-2 text-xs animate-fade-in">
               <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
                 <div className="flex items-center space-x-1.5 font-bold text-slate-200">
-                  <FileText className="w-3.5 h-3.5 text-purple-400" />
+                  <FileText className="w-3.5 h-3.5 text-teal-400" />
                   <span>Multi-File Module Shading</span>
                 </div>
                 <button
@@ -3054,12 +3054,12 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       {(wiringStart || isAgentWorking || agentState === 'PAUSED') && (
         <div className="absolute top-3 right-3 z-20 flex items-center space-x-2">
           {wiringStart && (
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-purple-950/90 border border-purple-500 text-purple-200 backdrop-blur-md shadow-2xl text-xs font-semibold animate-pulse">
-              <Cable className="w-3.5 h-3.5 text-purple-400" />
+            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-950/95 to-blue-950/95 border border-teal-500 text-teal-200 backdrop-blur-md shadow-2xl text-xs font-semibold animate-pulse">
+              <Cable className="w-3.5 h-3.5 text-teal-400" />
               <span>Click pin to connect</span>
               <button
                 onClick={() => setWiringStart(null)}
-                className="ml-1 px-1.5 py-0.5 rounded bg-purple-800 hover:bg-purple-700 text-white text-[10px] font-mono transition"
+                className="ml-1 px-1.5 py-0.5 rounded bg-teal-800 hover:bg-teal-700 text-white text-[10px] font-mono transition"
               >
                 Cancel
               </button>
@@ -3067,13 +3067,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           )}
 
           {isAgentWorking && (
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-purple-950/90 border border-purple-500/80 text-purple-200 backdrop-blur-md shadow-2xl text-xs font-semibold animate-pulse">
-              <Bot className="w-3.5 h-3.5 text-purple-400 animate-spin" />
+            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-950/95 to-purple-950/95 border border-teal-500/80 text-cyan-200 backdrop-blur-md shadow-2xl text-xs font-semibold animate-pulse">
+              <Bot className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
               <span>AI Agent: {agentState}</span>
               {onAgentIntervention && (
                 <button
                   onClick={() => onAgentIntervention('pause')}
-                  className="ml-1.5 px-2 py-0.5 rounded bg-purple-800 hover:bg-purple-700 text-white text-[10px] font-mono transition"
+                  className="ml-1.5 px-2 py-0.5 rounded bg-blue-800 hover:bg-blue-700 text-white text-[10px] font-mono transition"
                 >
                   Pause
                 </button>
@@ -3155,14 +3155,14 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       {/* Wiring Mode Active Banner (shown when user is routing a wire) */}
       {wiringStart && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-3 px-4 py-2 rounded-2xl bg-purple-950/95 border border-purple-500 text-purple-200 text-xs font-semibold backdrop-blur-md shadow-2xl animate-pulse pointer-events-none">
-          <Cable className="w-4 h-4 text-purple-400 flex-shrink-0" />
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-3 px-4 py-2 rounded-2xl bg-gradient-to-r from-teal-950/95 to-blue-950/95 border border-teal-500 text-teal-200 text-xs font-semibold backdrop-blur-md shadow-2xl shadow-teal-500/20 animate-pulse pointer-events-none">
+          <Cable className="w-4 h-4 text-teal-400 flex-shrink-0" />
           <span>
             Routing from <span className="text-white font-bold font-mono">{wiringStart.nodeId}:{wiringStart.portName}</span>
             {' '}— Click a {wiringStart.isSource ? 'target input' : 'source output'} pin to connect
           </span>
           <button
-            className="pointer-events-auto px-2 py-0.5 rounded bg-purple-800/80 hover:bg-purple-700 text-purple-200 text-[10px] font-mono transition ml-2 cursor-pointer"
+            className="pointer-events-auto px-2 py-0.5 rounded bg-teal-800/80 hover:bg-teal-700 text-teal-200 text-[10px] font-mono transition ml-2 cursor-pointer"
             onClick={() => setWiringStart(null)}
           >
             Esc

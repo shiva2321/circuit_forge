@@ -911,15 +911,15 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   const renderToolIcon = (id: ToolWindowId) => {
     switch (id) {
       case 'schematic':
-        return <Zap className="w-3.5 h-3.5 text-purple-400" />;
+        return <Zap className="w-3.5 h-3.5 text-teal-400" />;
       case 'editor':
-        return <FileCode className="w-3.5 h-3.5 text-indigo-400" />;
+        return <FileCode className="w-3.5 h-3.5 text-blue-400" />;
       case 'waveform':
         return <Activity className="w-3.5 h-3.5 text-emerald-400" />;
       case 'agent':
-        return <Bot className="w-3.5 h-3.5 text-pink-400" />;
+        return <Bot className="w-3.5 h-3.5 text-cyan-400" />;
       case 'kg':
-        return <Network className="w-3.5 h-3.5 text-sky-400" />;
+        return <Network className="w-3.5 h-3.5 text-purple-400" />;
     }
   };
 
@@ -928,31 +928,31 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
     switch (id) {
       case 'schematic':
         return (
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-950/70 text-purple-300 border border-purple-800/60">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-950/70 text-teal-300 border border-teal-700/60">
             {netlist?.nodes.length || 0} Gates · {netlist?.wires.length || 0} Nets
           </span>
         );
       case 'editor':
         return (
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-950/70 text-indigo-300 border border-indigo-800/60">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950/70 text-blue-300 border border-blue-700/60">
             VHDL-2008 RTL
           </span>
         );
       case 'waveform':
         return (
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-800/60">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-700/60">
             {waveform?.signals.length || 0} Signals
           </span>
         );
       case 'agent':
         return (
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-pink-950/70 text-pink-300 border border-pink-800/60">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-900 text-teal-300 border border-teal-600/60">
             {agentState}
           </span>
         );
       case 'kg':
         return (
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-950/70 text-sky-300 border border-sky-800/60">
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-950/70 text-purple-300 border border-purple-800/60">
             Active Ontology
           </span>
         );
@@ -1133,7 +1133,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
         style={style}
         onMouseDown={() => isFloating && bringToFront(win.id)}
         className={`flex flex-col bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl transition-shadow ${
-          isFloating ? 'hover:border-purple-600/70 hover:shadow-purple-950/40' : ''
+          isFloating ? 'hover:border-teal-500/70 hover:shadow-[0_0_20px_rgba(20,184,166,0.2)]' : ''
         }`}
       >
         {/* Window Title Bar */}
@@ -1157,14 +1157,14 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               <>
                 <button
                   onClick={() => snapToHalf(win.id, 'left')}
-                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-purple-300 transition cursor-pointer"
+                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-teal-300 transition cursor-pointer"
                   title="Snap window to Left Half (50%)"
                 >
                   <PanelLeft className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => snapToHalf(win.id, 'right')}
-                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-purple-300 transition cursor-pointer"
+                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-teal-300 transition cursor-pointer"
                   title="Snap window to Right Half (50%)"
                 >
                   <PanelRight className="w-3.5 h-3.5" />
@@ -1206,35 +1206,35 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             {/* Right Edge */}
             <div
               onMouseDown={(e) => handleStartResize(e, win.id, 'e')}
-              className="absolute top-2 right-0 w-2.5 h-[calc(100%-16px)] cursor-ew-resize z-30 hover:bg-purple-500/40 transition-colors"
+              className="absolute top-2 right-0 w-2.5 h-[calc(100%-16px)] cursor-ew-resize z-30 hover:bg-teal-500/40 transition-colors"
               title="Drag right edge to resize width"
             />
             {/* Bottom Edge */}
             <div
               onMouseDown={(e) => handleStartResize(e, win.id, 's')}
-              className="absolute bottom-0 left-2 w-[calc(100%-16px)] h-2.5 cursor-ns-resize z-30 hover:bg-purple-500/40 transition-colors"
+              className="absolute bottom-0 left-2 w-[calc(100%-16px)] h-2.5 cursor-ns-resize z-30 hover:bg-teal-500/40 transition-colors"
               title="Drag bottom edge to resize height"
             />
             {/* Left Edge */}
             <div
               onMouseDown={(e) => handleStartResize(e, win.id, 'w')}
-              className="absolute top-2 left-0 w-2.5 h-[calc(100%-16px)] cursor-ew-resize z-30 hover:bg-purple-500/40 transition-colors"
+              className="absolute top-2 left-0 w-2.5 h-[calc(100%-16px)] cursor-ew-resize z-30 hover:bg-teal-500/40 transition-colors"
               title="Drag left edge to resize width"
             />
             {/* Top Edge */}
             <div
               onMouseDown={(e) => handleStartResize(e, win.id, 'n')}
-              className="absolute top-0 left-2 w-[calc(100%-16px)] h-2.5 cursor-ns-resize z-30 hover:bg-purple-500/40 transition-colors"
+              className="absolute top-0 left-2 w-[calc(100%-16px)] h-2.5 cursor-ns-resize z-30 hover:bg-teal-500/40 transition-colors"
               title="Drag top edge to resize height"
             />
             {/* Bottom-Right Corner Handle with Visible Grip */}
             <div
               data-testid="window-resize-corner"
               onMouseDown={(e) => handleStartResize(e, win.id, 'se')}
-              className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-40 flex items-end justify-end p-1 group bg-slate-900/60 rounded-tl hover:bg-purple-900/60 transition-colors"
+              className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-40 flex items-end justify-end p-1 group bg-slate-900/60 rounded-tl hover:bg-teal-900/60 transition-colors"
               title="Drag corner to resize window"
             >
-              <div className="w-2.5 h-2.5 border-r-2 border-b-2 border-slate-400 group-hover:border-purple-300 transition-colors" />
+              <div className="w-2.5 h-2.5 border-r-2 border-b-2 border-slate-400 group-hover:border-teal-300 transition-colors" />
             </div>
             {/* Bottom-Left Corner */}
             <div
@@ -1308,12 +1308,12 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               onDoubleClick={() => setSplitRatio(50)}
               className={`relative w-2 group cursor-col-resize flex-shrink-0 flex items-center justify-center transition-colors select-none z-20 ${
                 isDraggingSplitter
-                  ? 'bg-purple-600 shadow-[0_0_12px_rgba(168,85,247,0.8)]'
-                  : 'bg-slate-900 hover:bg-purple-500/40 border-l border-r border-slate-800'
+                  ? 'bg-teal-500 shadow-[0_0_12px_rgba(20,184,166,0.6)]'
+                  : 'bg-slate-900 hover:bg-teal-500/40 border-l border-r border-slate-800'
               }`}
               title="Drag to resize Canvas vs RTL Editor · Double-click to reset (50/50)"
             >
-              <div className="w-0.5 h-7 rounded-full bg-slate-700/80 group-hover:bg-purple-300 transition-colors flex flex-col items-center justify-center space-y-1">
+              <div className="w-0.5 h-7 rounded-full bg-slate-700/80 group-hover:bg-teal-300 transition-colors flex flex-col items-center justify-center space-y-1">
                 <span className="w-0.5 h-0.5 rounded-full bg-slate-400 group-hover:bg-white" />
                 <span className="w-0.5 h-0.5 rounded-full bg-slate-400 group-hover:bg-white" />
               </div>
@@ -1382,7 +1382,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             {/* Visual Snap Candidate Ghost Box */}
             {snapCandidate && (
               <div
-                className={`absolute rounded-xl border-2 border-dashed border-purple-400 bg-purple-600/15 backdrop-blur-[1px] pointer-events-none z-40 transition-all duration-150 ${
+                className={`absolute rounded-xl border-2 border-dashed border-teal-400 bg-teal-500/10 backdrop-blur-[1px] pointer-events-none z-40 transition-all duration-150 ${
                   snapCandidate === 'left'
                     ? 'left-2 top-2 w-[calc(50%-12px)] h-[calc(100%-16px)]'
                     : snapCandidate === 'right'
@@ -1391,7 +1391,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
                 }`}
               >
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="px-3 py-1 rounded-full bg-purple-900/90 border border-purple-500/80 text-purple-200 text-xs font-mono font-bold shadow-lg">
+                  <span className="px-3 py-1 rounded-full bg-slate-900 border border-teal-500/80 text-teal-200 text-xs font-mono font-bold shadow-lg">
                     {snapCandidate === 'left' ? 'Snap Left (50%)' : snapCandidate === 'right' ? 'Snap Right (50%)' : 'Maximize Window'}
                   </span>
                 </div>
@@ -1439,7 +1439,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
                 <span>{id === 'schematic' ? 'Schematic' : id === 'editor' ? 'VHDL Editor' : id === 'waveform' ? 'Waveforms' : id === 'agent' ? 'Agent Deck' : 'Knowledge Graph'}</span>
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
-                    isVisible ? 'bg-purple-400 shadow-[0_0_6px_rgba(168,85,247,0.8)]' : 'bg-slate-600'
+                    isVisible ? 'bg-teal-400 shadow-[0_0_6px_rgba(20,184,166,0.8)]' : 'bg-slate-600'
                   }`}
                 />
               </button>
@@ -1454,12 +1454,12 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               onClick={() => onChangeLayoutMode('split')}
               className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] font-mono font-medium transition cursor-pointer ${
                 layoutMode === 'split'
-                  ? 'bg-purple-900/80 text-purple-200 border border-purple-600 shadow'
+                  ? 'bg-slate-800/90 text-teal-300 border border-teal-500/60 shadow'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
               title="Split View: Dual-Pane Schematic on left + RTL Editor on right"
             >
-              <Columns className="w-3 h-3 text-purple-400" />
+              <Columns className="w-3 h-3 text-teal-400" />
               <span>Split</span>
             </button>
 
@@ -1470,12 +1470,12 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               }}
               className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] font-mono font-medium transition cursor-pointer ${
                 layoutMode === 'tile'
-                  ? 'bg-purple-900/80 text-purple-200 border border-purple-600 shadow'
+                  ? 'bg-slate-800/90 text-teal-300 border border-teal-500/60 shadow'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
               title="Tile Grid: Automatically arrange open windows in non-overlapping tiles"
             >
-              <Grid3X3 className="w-3 h-3 text-purple-400" />
+              <Grid3X3 className="w-3 h-3 text-teal-400" />
               <span>Tile Grid</span>
             </button>
 
@@ -1483,22 +1483,22 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               onClick={() => onChangeLayoutMode('float')}
               className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] font-mono font-medium transition cursor-pointer ${
                 layoutMode === 'float'
-                  ? 'bg-purple-900/80 text-purple-200 border border-purple-600 shadow'
+                  ? 'bg-slate-800/90 text-teal-300 border border-teal-500/60 shadow'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
               title="Float Windows: Freely draggable, resizable, arrangeable studio windows"
             >
-              <Layers className="w-3 h-3 text-purple-400" />
+              <Layers className="w-3 h-3 text-teal-400" />
               <span>Float</span>
             </button>
           </div>
 
           <button
             onClick={applyTileLayout}
-            className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-slate-900/80 hover:bg-purple-950/60 border border-slate-800 hover:border-purple-600/60 text-slate-300 hover:text-purple-200 text-[11px] font-mono transition cursor-pointer"
+            className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-slate-900/80 hover:bg-teal-950/60 border border-slate-800 hover:border-teal-500/60 text-slate-300 hover:text-teal-200 text-[11px] font-mono transition cursor-pointer"
             title="Auto-Align: Arrange open windows side-by-side without overlap"
           >
-            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <Sparkles className="w-3.5 h-3.5 text-teal-400" />
             <span className="hidden sm:inline">Auto-Align</span>
           </button>
 

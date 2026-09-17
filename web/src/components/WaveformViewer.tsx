@@ -191,7 +191,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
             <button
               onClick={() => setRadix('hex')}
               className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition ${
-                radix === 'hex' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                radix === 'hex' ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               HEX
@@ -199,7 +199,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
             <button
               onClick={() => setRadix('dec')}
               className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition ${
-                radix === 'dec' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                radix === 'dec' ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               DEC
@@ -207,7 +207,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
             <button
               onClick={() => setRadix('bin')}
               className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition ${
-                radix === 'bin' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                radix === 'bin' ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               BIN
@@ -238,7 +238,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
             onClick={() => setShowValuesOnWave(!showValuesOnWave)}
             className={`flex items-center space-x-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition ${
               showValuesOnWave
-                ? 'bg-purple-950/60 border-purple-600 text-purple-300'
+                ? 'bg-teal-950/60 border-teal-500 text-teal-300'
                 : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}
             title="Toggle logic state labels on waves"
@@ -251,8 +251,8 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
         {/* Delta Time Measurement Cursor Readout */}
         <div className="flex items-center space-x-3">
           {deltaT !== null && (
-            <div className="flex items-center space-x-2 bg-slate-900 border border-purple-800/80 rounded-lg px-2.5 py-1 text-xs font-mono">
-              <span className="text-purple-400 font-bold">ΔT = {deltaT} ns</span>
+            <div className="flex items-center space-x-2 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1 text-xs font-mono">
+              <span className="text-amber-400 font-bold">ΔT = {deltaT} ns</span>
               {freqMHz && <span className="text-slate-400 font-semibold">({freqMHz} MHz)</span>}
               <span className="text-[10px] text-slate-500">[Click=A, Shift+Click=B]</span>
             </div>
@@ -278,11 +278,11 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
 
       {/* Live Hover Probe HUD Ribbon */}
       <div className="h-8 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center space-x-3 text-xs overflow-x-auto">
-        <div className="flex items-center space-x-1.5 text-purple-400 font-mono font-bold min-w-max">
+        <div className="flex items-center space-x-1.5 text-teal-400 font-mono font-bold min-w-max">
           <Crosshair className="w-3.5 h-3.5" />
           <span>PROBE:</span>
           {hoverTime !== null ? (
-            <span className="text-white bg-purple-900/60 px-1.5 py-0.5 rounded border border-purple-700">
+            <span className="text-white bg-gradient-to-r from-cyan-950/80 to-blue-950/80 px-1.5 py-0.5 rounded border border-cyan-700/60 text-cyan-200">
               T = {hoverTime} ns (Cycle {Math.floor(hoverTime / clockPeriod)})
             </span>
           ) : (
@@ -307,7 +307,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                         ? rawVal === '1'
                           ? 'text-emerald-400'
                           : 'text-slate-400'
-                        : 'text-purple-300'
+                        : 'text-cyan-300'
                     }`}
                   >
                     {formattedVal}
@@ -343,7 +343,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                 e.stopPropagation();
                 setIsDraggingSignalCol(true);
               }}
-              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-purple-500/60 transition-colors z-40 flex items-center justify-center"
+              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-cyan-500/60 transition-colors z-40 flex items-center justify-center"
               title="Drag to resize signal column"
             />
           </div>
@@ -360,7 +360,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                   style={{ left: `${x}px` }}
                 >
                   <span className="text-slate-300 font-bold">{t}ns</span>
-                  <span className="text-[9px] text-purple-400 font-semibold">[C{cycleIndex}]</span>
+                  <span className="text-[9px] text-cyan-400 font-semibold">[C{cycleIndex}]</span>
                 </div>
               );
             })}
@@ -417,7 +417,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                             },
                           });
                         }}
-                        className="p-1 rounded bg-slate-900 hover:bg-purple-950/80 border border-slate-800 hover:border-purple-600/60 text-slate-500 hover:text-purple-300 text-[9px] transition cursor-pointer"
+                        className="p-1 rounded bg-slate-900 hover:bg-cyan-950/80 border border-slate-800 hover:border-cyan-600/60 text-slate-500 hover:text-cyan-300 text-[9px] transition cursor-pointer"
                         title={`Add signal '${signal.name}' waveform state to EDA Copilot context`}
                       >
                         + Context
@@ -430,7 +430,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                             ? currentVal === '1'
                               ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
                               : 'bg-slate-900 border-slate-800 text-slate-400'
-                            : 'bg-purple-950/80 border-purple-700 text-purple-300'
+                            : 'bg-cyan-950/80 border-cyan-700 text-cyan-300'
                         }`}
                       >
                         {signal.width > 1 ? formatBusValue(currentVal) : currentVal}
@@ -521,7 +521,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                                 ${tStart + 4},33 
                                 ${tStart},21
                               `}
-                              className="fill-purple-950/70 stroke-purple-500 stroke-1 hover:fill-purple-900/80 transition"
+                              className="fill-cyan-950/70 stroke-cyan-500 stroke-1 hover:fill-cyan-900/80 transition"
                             />
                             {/* Formatted Bus Label inside segment */}
                             {width > 16 && (
@@ -529,7 +529,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
                                 x={tStart + width / 2}
                                 y={25}
                                 textAnchor="middle"
-                                className="fill-purple-200 text-[10px] font-mono font-bold select-none pointer-events-none"
+                                className="fill-cyan-200 text-[10px] font-mono font-bold select-none pointer-events-none"
                               >
                                 {width < 32 && displayVal.length > 4 ? '..' : displayVal}
                               </text>
@@ -637,13 +637,13 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({ waveform, summar
           </div>
         )}
 
-        {/* Hover Time Cursor (Purple Glowing Line) */}
+        {/* Hover Time Cursor (Electric Cyan Glowing Line) */}
         {hoverTime !== null && (
           <div
-            className="absolute top-0 bottom-0 pointer-events-none border-l-2 border-purple-400 z-20 shadow-md shadow-purple-500/50"
+            className="absolute top-0 bottom-0 pointer-events-none border-l-2 border-cyan-400 z-20 shadow-md shadow-cyan-500/50"
             style={{ left: `${208 + hoverTime * timeScale}px` }}
           >
-            <div className="bg-purple-600 text-white text-[9px] font-mono font-bold px-1 rounded-b">
+            <div className="bg-cyan-500 text-slate-950 text-[9px] font-mono font-bold px-1 rounded-b shadow-sm">
               {hoverTime}ns
             </div>
           </div>

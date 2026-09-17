@@ -1314,14 +1314,14 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
       {/* ── ROW 1: Identity + Agent Controls ─────────────────────────────── */}
       <div className="relative px-3 py-2 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between flex-shrink-0 backdrop-blur z-30">
         <div className="flex items-center space-x-2 min-w-0">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-purple-500/30 flex-shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md shadow-teal-500/20 flex-shrink-0">
             <Bot className="w-4 h-4" />
           </div>
           <div className="min-w-0">
             <div className="text-xs font-bold text-slate-200 flex items-center space-x-1.5">
               <span>EDA Copilot</span>
               <span className={`font-mono font-semibold px-1.5 rounded text-[9px] ${
-                agentState === 'RUNNING' ? 'bg-purple-950 border border-purple-700 text-purple-300 animate-pulse'
+                agentState === 'RUNNING' ? 'bg-teal-950/80 border border-teal-600/70 text-teal-300 animate-pulse'
                 : agentState === 'PAUSED' ? 'bg-amber-950 border border-amber-700 text-amber-300'
                 : agentState === 'COMPLETED' ? 'bg-emerald-950 border border-emerald-700 text-emerald-300'
                 : 'bg-slate-800 text-slate-400'
@@ -1377,8 +1377,8 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
             onClick={() => setIsRedirectOpen(!isRedirectOpen)}
             className={`p-1 rounded-lg text-xs flex items-center transition cursor-pointer ${
               isRedirectOpen
-                ? 'bg-purple-600 text-white ring-2 ring-purple-400/50'
-                : 'bg-indigo-900/80 hover:bg-indigo-700 text-indigo-200'
+                ? 'bg-teal-600 text-white ring-2 ring-teal-400/50'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
             }`}
             title="Redirect Agent — steer mission with context & prompt"
           >
@@ -1389,10 +1389,10 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
           <div className="relative">
             <button
               onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-              className="px-2 py-1 rounded-lg border border-slate-700 hover:border-purple-500 bg-slate-800/90 text-slate-300 hover:text-white text-[10px] font-mono flex items-center space-x-1 transition cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-slate-700 hover:border-teal-500 bg-slate-800/90 text-slate-300 hover:text-white text-[10px] font-mono flex items-center space-x-1 transition cursor-pointer"
               title="Switch Active AI Model"
             >
-              <Cpu className="w-3 h-3 text-purple-400" />
+              <Cpu className="w-3 h-3 text-cyan-400" />
               <span className="max-w-[90px] truncate">{selectedModel.split('/').pop() || selectedModel}</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
@@ -1406,17 +1406,17 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                       <button
                         key={m.id}
                         onClick={() => { onUpdateOpenRouterConfig(openrouterKey, m.id); setIsModelDropdownOpen(false); }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition cursor-pointer ${selectedModel === m.id ? 'bg-purple-950/80 text-purple-200 font-semibold' : 'text-slate-300 hover:bg-slate-800'}`}
+                        className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition cursor-pointer ${selectedModel === m.id ? 'bg-slate-800 text-teal-200 font-semibold' : 'text-slate-300 hover:bg-slate-800'}`}
                       >
                         <span className="truncate">{m.name}</span>
-                        {selectedModel === m.id && <Check className="w-3 h-3 text-purple-400 flex-shrink-0" />}
+                        {selectedModel === m.id && <Check className="w-3 h-3 text-teal-400 flex-shrink-0" />}
                       </button>
                     ))}
                   </div>
                   <div className="pt-1">
                     <button
                       onClick={() => { setIsModelDropdownOpen(false); setIsSettingsOpen(true); }}
-                      className="w-full text-left px-2 py-1 rounded text-[10px] text-purple-400 hover:text-purple-300 hover:bg-slate-800/60 flex items-center space-x-1 transition cursor-pointer"
+                      className="w-full text-left px-2 py-1 rounded text-[10px] text-teal-400 hover:text-teal-300 hover:bg-slate-800/60 flex items-center space-x-1 transition cursor-pointer"
                     >
                       <Settings2 className="w-3 h-3" />
                       <span>API Key & Advanced Settings...</span>
@@ -1493,11 +1493,11 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                 setShowTopContextPicker(!showTopContextPicker);
                 setShowHistoryPanel(false);
               }}
-              className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-purple-950/70 hover:bg-purple-900 border border-purple-700/60 hover:border-purple-500 text-[9.5px] font-mono text-purple-200 hover:text-white transition cursor-pointer shadow-sm"
+              className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-teal-500 text-[9.5px] font-mono text-slate-300 hover:text-white transition cursor-pointer shadow-sm"
               title="Add or restore context items for the agent"
               data-testid="top-add-context-btn"
             >
-              <Plus className="w-2.5 h-2.5 text-purple-400" />
+              <Plus className="w-2.5 h-2.5 text-teal-400" />
               <span>+ Ctx</span>
               {excludedContextKeys.size > 0 && (
                 <span className="ml-0.5 px-1 rounded-full bg-amber-600/80 text-white text-[8px] font-bold" title={`${excludedContextKeys.size} context source(s) excluded`}>
@@ -1513,7 +1513,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                   {/* Header */}
                   <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
                     <div className="flex items-center space-x-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                      <Sparkles className="w-3.5 h-3.5 text-teal-400" />
                       <span className="text-[11px] font-bold text-slate-200">Manage Agent Context</span>
                     </div>
                     <button
@@ -1531,7 +1531,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                       onClick={() => setContextModalTab('smart')}
                       className={`px-2.5 py-1 rounded-t-md font-semibold transition cursor-pointer flex items-center space-x-1 ${
                         contextModalTab === 'smart'
-                          ? 'bg-slate-900 text-purple-300 border-t border-x border-slate-700'
+                          ? 'bg-slate-900 text-amber-300 border-t border-x border-slate-700'
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
@@ -1543,7 +1543,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                       onClick={() => setContextModalTab('windows')}
                       className={`px-2.5 py-1 rounded-t-md font-semibold transition cursor-pointer flex items-center space-x-1 ${
                         contextModalTab === 'windows'
-                          ? 'bg-slate-900 text-purple-300 border-t border-x border-slate-700'
+                          ? 'bg-slate-900 text-cyan-300 border-t border-x border-slate-700'
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
@@ -1555,7 +1555,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                       onClick={() => setContextModalTab('files')}
                       className={`px-2.5 py-1 rounded-t-md font-semibold transition cursor-pointer flex items-center space-x-1 ${
                         contextModalTab === 'files'
-                          ? 'bg-slate-900 text-purple-300 border-t border-x border-slate-700'
+                          ? 'bg-slate-900 text-blue-300 border-t border-x border-slate-700'
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
@@ -1952,7 +1952,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
             <span
               key={token.id}
               className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md border text-[9.5px] font-mono flex-shrink-0 transition ${
-                token.isChip ? 'bg-purple-950/60 border-purple-600/80 text-purple-200' : 'bg-slate-900 border-slate-700 text-slate-300'
+                token.isChip ? 'bg-teal-950/60 border-teal-500/70 text-teal-200' : 'bg-slate-900 border-slate-700 text-slate-300'
               }`}
               title={token.title}
             >
@@ -1979,21 +1979,21 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         <div className="flex items-center space-x-1 flex-shrink-0 pl-1 border-l border-slate-800">
           <button
             onClick={handleNewChat}
-            className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-purple-950/60 hover:bg-purple-900 border border-purple-700/60 hover:border-purple-500 text-[9.5px] font-mono text-purple-200 hover:text-white transition cursor-pointer shadow-sm"
+            className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-teal-500 text-[9.5px] font-mono text-slate-300 hover:text-white transition cursor-pointer shadow-sm"
             title="Start fresh conversation in this project (current session auto-saved to history)"
             data-testid="top-new-chat-btn"
           >
-            <MessageSquarePlus className="w-3 h-3 text-purple-400" />
+            <MessageSquarePlus className="w-3 h-3 text-teal-400" />
             <span>+ Chat</span>
           </button>
 
           <button
             onClick={handleOpenTaskWizard}
-            className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-[9.5px] font-mono text-indigo-200 hover:text-white transition cursor-pointer shadow-sm"
+            className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-cyan-500 text-[9.5px] font-mono text-slate-300 hover:text-white transition cursor-pointer shadow-sm"
             title="Open Autonomous Engineering Task Wizard (Goals, IEEE standards, constraints, and supervision mode)"
             data-testid="top-new-task-btn"
           >
-            <Sparkles className="w-3 h-3 text-indigo-400" />
+            <Sparkles className="w-3 h-3 text-cyan-400" />
             <span>+ Task</span>
           </button>
 
@@ -2004,7 +2004,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                 setShowHistoryPanel(!showHistoryPanel);
                 setShowTopContextPicker(false);
               }}
-              className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-700 hover:border-purple-600 text-[9.5px] font-mono text-slate-400 hover:text-purple-200 transition cursor-pointer"
+              className="flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-700 hover:border-slate-600 text-[9.5px] font-mono text-slate-400 hover:text-slate-200 transition cursor-pointer"
               title="Chat & Task Session History"
               data-testid="session-history-btn"
             >
@@ -2020,7 +2020,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => { handleNewChat(); setShowHistoryPanel(false); }}
-                        className="text-[9px] text-purple-400 hover:text-purple-300 font-mono flex items-center space-x-0.5 transition cursor-pointer"
+                        className="text-[9px] text-teal-400 hover:text-teal-300 font-mono flex items-center space-x-0.5 transition cursor-pointer"
                         title="Start new chat session"
                       >
                         <Plus className="w-3 h-3" />
@@ -2147,7 +2147,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         <div className="flex items-center space-x-1.5 min-w-0">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
           <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider flex-shrink-0">Screen:</span>
-          <span className="px-2 py-0.5 rounded bg-purple-950/80 border border-purple-700/60 text-purple-200 font-semibold truncate text-[10px]" title="Active Studio Workspace Tab">
+          <span className="px-2 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-slate-200 font-semibold truncate text-[10px]" title="Active Studio Workspace Tab">
             {circuitContext?.active_tab_label || 'Design & RTL Studio'}
           </span>
         </div>
@@ -2179,31 +2179,43 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         <div className="flex items-center space-x-1">
           <button
             onClick={() => setViewMode('chat')}
-            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${viewMode === 'chat' ? 'bg-purple-600 text-white shadow-sm' : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'}`}
+            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${
+              viewMode === 'chat'
+                ? 'bg-slate-800 text-white border border-slate-700 font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
           >
-            <MessageSquare className="w-3 h-3" />
+            <MessageSquare className={`w-3 h-3 ${viewMode === 'chat' ? 'text-teal-300' : 'text-teal-400'}`} />
             <span>Co-Pilot</span>
           </button>
           <button
             onClick={() => setViewMode('mental-map')}
-            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${viewMode === 'mental-map' ? 'bg-purple-600 text-white shadow-sm' : 'bg-slate-800/80 text-purple-400 hover:text-purple-200'}`}
+            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${
+              viewMode === 'mental-map'
+                ? 'bg-slate-800 text-white border border-slate-700 font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
           >
-            <Brain className="w-3 h-3" />
+            <Brain className={`w-3 h-3 ${viewMode === 'mental-map' ? 'text-cyan-300' : 'text-cyan-400'}`} />
             <span>Mind Map</span>
             <span className={`w-1.5 h-1.5 rounded-full ml-0.5 ${mentalMapPulse ? 'bg-emerald-300 animate-ping' : 'bg-emerald-500'}`} />
           </button>
           <button
             onClick={() => setViewMode('eng-logs')}
-            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${viewMode === 'eng-logs' ? 'bg-purple-600 text-white shadow-sm' : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'}`}
+            className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition font-medium ${
+              viewMode === 'eng-logs'
+                ? 'bg-slate-800 text-white border border-slate-700 font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
           >
-            <Terminal className="w-3 h-3" />
+            <Terminal className={`w-3 h-3 ${viewMode === 'eng-logs' ? 'text-blue-300' : 'text-blue-400'}`} />
             <span>Eng Logs</span>
             {engineeringLogs.length > 0 && <span className="px-1 rounded-full bg-slate-700 text-slate-300 text-[8px] font-bold">{engineeringLogs.length}</span>}
           </button>
           {viewMode === 'task-wizard' && (
             <button
               onClick={() => setViewMode('task-wizard')}
-              className="px-2.5 py-1 rounded-md flex items-center space-x-1 font-medium bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm animate-fade-in"
+              className="px-2.5 py-1 rounded-md flex items-center space-x-1 font-medium bg-slate-800 text-white border border-slate-700 shadow-sm"
               title="Autonomous Engineering Task Setup"
             >
               <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
@@ -3007,7 +3019,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
 
         {/* Floating Mention Autocomplete Popup */}
         {mentionMenu?.open && filteredMentionItems.length > 0 && (
-          <div className="mb-2 p-1.5 bg-slate-900/98 backdrop-blur-md border border-purple-500/70 rounded-xl shadow-2xl overflow-hidden z-50 animate-fade-in max-h-64 overflow-y-auto font-sans">
+          <div className="mb-2 p-1.5 bg-slate-900/98 backdrop-blur-md border border-slate-700 rounded-xl shadow-2xl overflow-hidden z-50 animate-fade-in max-h-64 overflow-y-auto font-sans">
             <div className="px-2 py-1 border-b border-slate-800 flex items-center justify-between text-[10px] text-slate-400 font-mono">
               <span className="flex items-center space-x-1">
                 {mentionMenu.type === 'file' ? (
@@ -3036,16 +3048,16 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                     onMouseEnter={() => setMentionMenu(prev => prev ? { ...prev, selectedIndex: idx } : null)}
                     onClick={() => handleSelectMentionItem(item)}
                     className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-xs transition cursor-pointer ${
-                      isSelected ? 'bg-purple-950/90 border border-purple-500 text-white shadow-sm' : 'hover:bg-slate-800/80 text-slate-300 border border-transparent'
+                      isSelected ? 'bg-slate-800 border border-teal-500/60 text-white shadow-sm' : 'hover:bg-slate-800/80 text-slate-300 border border-transparent'
                     }`}
                   >
                     <div className="flex items-center space-x-2 min-w-0">
                       {item.triggerType === 'file' ? (
-                        <FileCode className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-purple-300' : 'text-blue-400'}`} />
+                        <FileCode className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-blue-300' : 'text-blue-400'}`} />
                       ) : item.type === 'tab' ? (
-                        <Layout className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-purple-300' : 'text-amber-400'}`} />
+                        <Layout className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-amber-300' : 'text-amber-400'}`} />
                       ) : item.type === 'screen' ? (
-                        <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-purple-300' : 'text-cyan-400'}`} />
+                        <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-cyan-300' : 'text-cyan-400'}`} />
                       ) : (
                         <Monitor className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-purple-300' : 'text-purple-400'}`} />
                       )}
@@ -3059,7 +3071,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                     </div>
                     {item.statusBadge && (
                       <span className={`text-[8.5px] font-mono px-1.5 py-0.5 rounded ml-2 flex-shrink-0 ${
-                        isSelected ? 'bg-purple-900/80 text-purple-200 border border-purple-700' : 'bg-slate-950 text-slate-400 border border-slate-800'
+                        isSelected ? 'bg-slate-800 text-teal-300 border border-teal-500/50' : 'bg-slate-950 text-slate-400 border border-slate-800'
                       }`}>
                         {item.statusBadge}
                       </span>
@@ -3097,7 +3109,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
             value={steerPrompt}
             onChange={handlePromptInputChange}
             onKeyDown={handlePromptKeyDown}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans resize-none"
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 font-sans resize-none"
           />
           <div className="flex items-center justify-between">
             {/* Context attachment picker */}
@@ -3105,12 +3117,12 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
               <button
                 type="button"
                 onClick={() => setShowContextPicker(!showContextPicker)}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-purple-600 text-slate-400 hover:text-purple-200 text-[10px] font-mono transition cursor-pointer"
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-teal-500 text-slate-400 hover:text-teal-200 text-[10px] font-mono transition cursor-pointer"
                 title="Attach context to message"
               >
                 <Paperclip className="w-3 h-3" />
                 <span>Context</span>
-                {contextChips.length > 0 && <span className="px-1 rounded-full bg-purple-600 text-white text-[8px] font-bold">{contextChips.length}</span>}
+                {contextChips.length > 0 && <span className="px-1 rounded-full bg-teal-600 text-white text-[8px] font-bold">{contextChips.length}</span>}
               </button>
 
               {showContextPicker && (
@@ -3196,13 +3208,13 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                             value={customContextText}
                             onChange={e => setCustomContextText(e.target.value)}
                             placeholder="Any code, notes, or text..."
-                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 font-mono"
                             onKeyDown={e => { if (e.key === 'Enter' && customContextText.trim()) { addContextChip({ type: 'custom', label: customContextText.slice(0, 30), data: { text: customContextText } }); setCustomContextText(''); setShowContextPicker(false); } }}
                           />
                           <button
                             type="button"
                             onClick={() => { if (customContextText.trim()) { addContextChip({ type: 'custom', label: customContextText.slice(0, 30), data: { text: customContextText } }); setCustomContextText(''); setShowContextPicker(false); } }}
-                            className="p-1 bg-purple-700 hover:bg-purple-600 text-white rounded-lg transition cursor-pointer"
+                            className="p-1 bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition cursor-pointer"
                           >
                             <Plus className="w-3 h-3" />
                           </button>
@@ -3218,7 +3230,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
             <button
               type="submit"
               disabled={!steerPrompt.trim() && contextChips.length === 0}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white rounded-xl text-xs font-semibold shadow transition cursor-pointer"
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-400 hover:to-cyan-500 disabled:opacity-40 text-slate-950 font-bold rounded-xl text-xs shadow-md shadow-teal-500/20 transition cursor-pointer"
               title={agentState === 'RUNNING' || agentState === 'PAUSED' ? 'Steer Agent' : 'Send / Launch Task'}
             >
               {agentState === 'RUNNING' || agentState === 'PAUSED' ? (

@@ -16,17 +16,17 @@ interface ContextChipProps {
 }
 
 const typeConfig: Record<ContextChipType, { icon: React.ReactNode; color: string }> = {
-  node: { icon: <Cpu className="w-2.5 h-2.5" />, color: 'bg-indigo-950/80 border-indigo-700 text-indigo-200' },
-  wire: { icon: <GitBranch className="w-2.5 h-2.5" />, color: 'bg-cyan-950/80 border-cyan-700 text-cyan-200' },
-  file: { icon: <FileCode className="w-2.5 h-2.5" />, color: 'bg-blue-950/80 border-blue-600 text-blue-200' },
-  code_range: { icon: <Code2 className="w-2.5 h-2.5" />, color: 'bg-amber-950/80 border-amber-700 text-amber-200' },
-  chat_history: { icon: <MessageSquare className="w-2.5 h-2.5" />, color: 'bg-purple-950/80 border-purple-700 text-purple-200' },
-  drc_issue: { icon: <ShieldAlert className="w-2.5 h-2.5" />, color: 'bg-rose-950/80 border-rose-700 text-rose-200' },
-  canvas_snapshot: { icon: <Cpu className="w-2.5 h-2.5" />, color: 'bg-emerald-950/80 border-emerald-700 text-emerald-200' },
-  window: { icon: <Monitor className="w-2.5 h-2.5" />, color: 'bg-indigo-950/80 border-indigo-500 text-indigo-200' },
-  tab: { icon: <Layers className="w-2.5 h-2.5" />, color: 'bg-cyan-950/80 border-cyan-600 text-cyan-200' },
-  screen: { icon: <Layout className="w-2.5 h-2.5" />, color: 'bg-purple-950/80 border-purple-600 text-purple-200' },
-  custom: { icon: <Code2 className="w-2.5 h-2.5" />, color: 'bg-slate-800 border-slate-600 text-slate-200' },
+  node: { icon: <Cpu className="w-2.5 h-2.5 text-emerald-400" />, color: 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' },
+  wire: { icon: <GitBranch className="w-2.5 h-2.5 text-teal-400" />, color: 'bg-teal-950/60 border-teal-500/50 text-teal-200' },
+  file: { icon: <FileCode className="w-2.5 h-2.5 text-blue-400" />, color: 'bg-blue-950/60 border-blue-500/50 text-blue-200' },
+  code_range: { icon: <Code2 className="w-2.5 h-2.5 text-amber-400" />, color: 'bg-amber-950/60 border-amber-500/50 text-amber-200' },
+  chat_history: { icon: <MessageSquare className="w-2.5 h-2.5 text-purple-400" />, color: 'bg-purple-950/60 border-purple-500/50 text-purple-200' },
+  drc_issue: { icon: <ShieldAlert className="w-2.5 h-2.5 text-rose-400" />, color: 'bg-rose-950/60 border-rose-500/50 text-rose-200' },
+  canvas_snapshot: { icon: <Cpu className="w-2.5 h-2.5 text-teal-400" />, color: 'bg-slate-900 border-teal-500/50 text-teal-200' },
+  window: { icon: <Monitor className="w-2.5 h-2.5 text-blue-400" />, color: 'bg-slate-900 border-blue-500/50 text-blue-200' },
+  tab: { icon: <Layers className="w-2.5 h-2.5 text-cyan-400" />, color: 'bg-slate-900 border-cyan-500/50 text-cyan-200' },
+  screen: { icon: <Layout className="w-2.5 h-2.5 text-purple-400" />, color: 'bg-slate-900 border-purple-500/50 text-purple-200' },
+  custom: { icon: <Code2 className="w-2.5 h-2.5 text-slate-400" />, color: 'bg-slate-900 border-slate-700 text-slate-200' },
 };
 
 export const ContextChip: React.FC<ContextChipProps> = ({ chip, onRemove }) => {

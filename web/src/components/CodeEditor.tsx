@@ -1485,7 +1485,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           <div className="flex-1 overflow-hidden">
             {isMarkdown && mdViewMode === 'preview' ? (
               <div className="w-full h-full overflow-hidden bg-slate-950">
-                <MarkdownDocViewer content={activeFile?.code || ''} className="h-full" />
+                <MarkdownDocViewer content={activeFile?.code || ''} />
               </div>
             ) : isMarkdown && mdViewMode === 'split' ? (
               <div className="flex w-full h-full overflow-hidden">
@@ -1545,7 +1545,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                   />
                 </div>
                 <div className="w-1/2 h-full overflow-hidden bg-slate-950">
-                  <MarkdownDocViewer content={activeFile?.code || ''} className="h-full" />
+                  <MarkdownDocViewer content={activeFile?.code || ''} />
                 </div>
               </div>
             ) : (

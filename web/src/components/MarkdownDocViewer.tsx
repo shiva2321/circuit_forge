@@ -270,8 +270,10 @@ export const MarkdownDocViewer: React.FC<MarkdownDocViewerProps> = ({ content, c
   }
 
   return (
-    <div className={`markdown-preview p-5 max-w-4xl mx-auto select-text font-sans ${className}`}>
-      {elements}
+    <div className="w-full h-full overflow-y-auto overflow-x-hidden custom-scrollbar select-text bg-slate-950">
+      <div className={`markdown-preview pt-12 px-6 pb-28 max-w-4xl mx-auto font-sans ${className}`}>
+        {elements}
+      </div>
     </div>
   );
 };

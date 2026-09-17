@@ -65,7 +65,7 @@ export interface SchematicCanvasProps {
   isAutosaveEnabled?: boolean;
   onNodeSelect?: (node: NetlistNode | null) => void;
   onWireSelect?: (wireId: string | null, wireName?: string) => void;
-  onAddToAgentContext?: (item: { type: 'node' | 'wire' | 'code_range' | 'file'; label: string; data: any }) => void;
+  onAddToAgentContext?: (item: { type: 'node' | 'wire' | 'code_range' | 'file' | 'canvas_snapshot' | string; label: string; data: any }) => void;
 }
 
 export interface CanvasNotification {
@@ -4828,7 +4828,38 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
           {/* Canvas Background Options */}
           {contextMenu.type === 'canvas' && (
-            <div className="py-1 space-y-0.5 min-w-[200px]">
+            <div className="py-1 space-y-1 min-w-[220px]">
+              {onAddToAgentContext && (
+                <button
+                  onClick={() => {
+                    const nodeCount = netlist?.nodes?.length || 0;
+                    const wireCount = netlist?.wires?.length || 0;
+                    const inCount = netlist?.primary_inputs?.length || 0;
+                    const outCount = netlist?.primary_outputs?.length || 0;
+                    const cName = netlist?.name || 'Active Schematic';
+                    onAddToAgentContext({
+                      type: 'canvas_snapshot',
+                      label: `${cName} (${nodeCount}g, ${wireCount}w)`,
+                      data: {
+                        circuitName: cName,
+                        gates: nodeCount,
+                        wires: wireCount,
+                        inputs: netlist?.primary_inputs?.map((p) => p.name) || [],
+                        outputs: netlist?.primary_outputs?.map((p) => p.name) || [],
+                        nodes: netlist?.nodes?.map((n) => ({ id: n.id, label: n.label, type: n.type })) || [],
+                        summary: `${cName}: ${nodeCount} gates, ${wireCount} wires, ${inCount} primary inputs, ${outCount} primary outputs`,
+                      },
+                    });
+                    addNotification('success', 'Attached to Agent', `Added schematic "${cName}" to EDA Copilot context.`);
+                    setContextMenu(null);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg bg-teal-950/70 hover:bg-teal-900/90 border border-teal-700/60 flex items-center space-x-2 text-teal-300 hover:text-white transition font-medium cursor-pointer shadow-sm group"
+                >
+                  <Bot className="w-3.5 h-3.5 text-teal-400 group-hover:scale-110 transition-transform" />
+                  <span className="font-semibold">Add to Agent Context</span>
+                </button>
+              )}
+
               <div className="px-2 py-1 text-[10px] uppercase font-bold tracking-wider text-slate-400 border-b border-slate-800">
                 Quick Insert at Cursor
               </div>

@@ -1,0 +1,10 @@
+{
+  "id": "rpi5_linux_gateway",
+  "name": "Raspberry Pi 5 Linux Edge Gateway",
+  "scale": 4,
+  "scale_label": "Scale 4: Linux SBC (BCM2712)",
+  "description": "Industrial edge controller running Linux on Broadcom BCM2712 Quad Cortex-A76 with gpiozero, systemd service, and 40-pin header mapping.",
+  "created_at": 1789527387.9827487,
+  "last_modified": 1789527387.9827487,
+  "top_file": "edge_controller.py"
+}

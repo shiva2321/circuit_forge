@@ -7,7 +7,7 @@ Simulation Engine, and Circuit Knowledge Graph.
 import asyncio
 import os
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +24,12 @@ from backend.app.engine.ast_parser import VHDLParser
 from backend.app.agent.openrouter import openrouter_client, AVAILABLE_MODELS
 from backend.app.engine.toolchain import toolchain_mgr
 from backend.app.engine.project_manager import project_mgr
+from backend.app.engine.multiphysics import multiphysics_engine
+from backend.app.engine.forging import forging_engine
+from backend.app.engine.qa_testing import qa_testing_engine
+from backend.app.engine.firmware_security import firmware_security_engine
+from backend.app.engine.supply_chain import supply_chain_engine
+from backend.app.engine.embedded_platforms import embedded_platforms_engine
 
 app = FastAPI(
     title="CircuitForge EDA & Knowledge Graph Server",
@@ -107,10 +113,34 @@ class HFIngestRequest(BaseModel):
     max_samples: int = 10
 
 class AgentChatRequest(BaseModel):
+    """
+    Request model for autonomous EDA copilot interactions.
+    Supports rich circuit context including live netlist, active VHDL,
+    DRC diagnostics, simulation telemetry, user selection, and attached chips.
+    """
     message: str
     circuit_context: Optional[Dict[str, Any]] = None
     openrouter_key: Optional[str] = None
     model: Optional[str] = None
+    project_id: Optional[str] = None
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+class AgentAutoFixRequest(BaseModel):
+    project_id: Optional[str] = None
+    target_file: Optional[str] = None
+    vhdl_code: Optional[str] = None
+    circuit_name: Optional[str] = None
+    issues: Optional[List[Any]] = None
+
+class ToolExecuteRequest(BaseModel):
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+    project_id: Optional[str] = None
+
+class CircuitBenchmarkRequest(BaseModel):
+    circuit_name: str = "full_adder_gate_level"
+    duration_ns: int = 100
+    vhdl_code: Optional[str] = None
 
 class ProjectCreateRequest(BaseModel):
     name: str
@@ -135,6 +165,13 @@ class FileRenameRequest(BaseModel):
 @app.get("/api/projects")
 def list_projects():
     return project_mgr.list_projects()
+
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str):
+    p = project_mgr.get_project(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    return p
 
 @app.post("/api/projects/create")
 def create_project(req: ProjectCreateRequest):
@@ -178,6 +215,7 @@ def get_status():
     return {
         "status": "online",
         "agent_state": agent.state.value,
+        "current_phase": agent.current_phase,
         "kg_nodes": kg.graph.number_of_nodes(),
         "kg_edges": kg.graph.number_of_edges(),
     }
@@ -372,18 +410,22 @@ async def materialize_design(req: MaterializeRequest):
 
 @app.post("/api/agent/chat")
 async def chat_with_agent(req: AgentChatRequest):
+    from backend.app.agent.openrouter import sanitize_credentials
     key = req.openrouter_key or openrouter_client.api_key
     model = req.model or openrouter_client.default_model
 
-    # Broadcast user chat message to WebSocket
+    clean_user_message = sanitize_credentials(req.message)
+
+    # Broadcast user chat message to WebSocket safely
+    ms_now = int(time.time() * 1000)
     await global_bus.broadcast({
         "type": "agent_thought",
-        "timestamp": time.time(),
+        "timestamp": ms_now,
         "data": {
-            "time": time.time(),
+            "time": ms_now,
             "state": "CO-PILOT",
             "action": "user_chat",
-            "thought": f"Human Co-Pilot: '{req.message}'"
+            "thought": f"Human Co-Pilot: '{clean_user_message}'"
         }
     })
 
@@ -391,10 +433,15 @@ async def chat_with_agent(req: AgentChatRequest):
         message=req.message,
         circuit_context=req.circuit_context,
         api_key=key,
-        model=model
+        model=model,
+        tools_instance=tools,
+        project_id=req.project_id,
+        chat_history=req.chat_history
     )
 
-    # Broadcast agent response to WebSocket
+    clean_reply = sanitize_credentials(res.get("reply", ""))
+
+    # Broadcast agent response to WebSocket safely
     await global_bus.broadcast({
         "type": "agent_thought",
         "timestamp": time.time(),
@@ -402,8 +449,13 @@ async def chat_with_agent(req: AgentChatRequest):
             "time": time.time(),
             "state": "CO-PILOT",
             "action": "agent_reply",
-            "thought": res.get("reply", ""),
-            "details": {"model": res.get("model"), "action": res.get("action"), "is_llm": res.get("is_llm")}
+            "thought": clean_reply,
+            "details": {
+                "model": res.get("model"),
+                "action": res.get("action"),
+                "tool_history": res.get("tool_history", []),
+                "is_llm": res.get("is_llm")
+            }
         }
     })
 
@@ -418,7 +470,67 @@ async def chat_with_agent(req: AgentChatRequest):
             "data": sim_res
         })
 
+    # If action is apply_code, automatically write to active project on disk and broadcast live updates
+    if action and action.get("type") in ("apply_code", "synthesize") and action.get("vhdl_code"):
+        c_code = action["vhdl_code"]
+        c_name = action.get("circuit_name") or (req.circuit_context or {}).get("circuit_name", "circuit_top")
+        target_pid = req.project_id or (req.circuit_context or {}).get("project_id") or "scale1_full_adder"
+        target_path = action.get("file_path") or f"src/{c_name}.vhd"
+        try:
+            project_mgr.write_file(target_pid, target_path, c_code)
+
+            # Synthesize netlist so schematic canvas updates immediately
+            try:
+                synth_nl = VHDLParser.synthesize_from_vhdl(c_code)
+                await global_bus.broadcast({
+                    "type": "netlist_synthesized",
+                    "timestamp": time.time(),
+                    "data": synth_nl
+                })
+            except Exception:
+                pass
+
+            await global_bus.broadcast({
+                "type": "circuit_designed",
+                "timestamp": time.time(),
+                "data": {
+                    "vhdl_code": c_code,
+                    "circuit_name": c_name,
+                    "file_path": target_path
+                }
+            })
+
+            await global_bus.broadcast({
+                "type": "project_files_updated",
+                "timestamp": time.time(),
+                "data": {
+                    "project_id": target_pid,
+                    "action": "chat_apply_code",
+                    "path": target_path,
+                    "files": [target_path],
+                    "top_file": target_path,
+                    "circuit_name": c_name
+                }
+            })
+        except Exception:
+            pass
+
     return res
+
+@app.get("/api/agent/tools")
+def get_agent_tools():
+    """Returns the OpenAI/OpenRouter compatible tool schema definitions for autonomous execution."""
+    return {"tools": tools.get_tool_definitions()}
+
+@app.post("/api/agent/tools/execute")
+def execute_agent_tool(req: ToolExecuteRequest):
+    """Directly executes a tool by name within the sandboxed project environment."""
+    return tools.execute_tool(req.tool_name, req.arguments, default_project_id=req.project_id)
+
+@app.post("/api/agent/benchmark")
+def benchmark_circuit(req: CircuitBenchmarkRequest):
+    """Executes multi-dimensional architectural benchmarking on a circuit."""
+    return tools.eda_benchmark_circuit(req.circuit_name, req.duration_ns, req.vhdl_code)
 
 @app.post("/api/agent/intervention")
 async def agent_intervention(req: AgentInterventionRequest):
@@ -453,7 +565,32 @@ async def agent_intervention(req: AgentInterventionRequest):
     elif action == "steer":
         if req.guidance:
             agent.steer(req.guidance)
+            if any(kw in req.guidance.lower() for kw in ("auto-fix", "autofix", "repair all", "fix all", "floating cmos")):
+                fix_res = tools.auto_fix_drc()
+                if fix_res.get("success") and fix_res.get("netlist"):
+                    await global_bus.broadcast({
+                        "type": "netlist_synthesized",
+                        "data": fix_res["netlist"]
+                    })
+                    return {"status": "Auto-fix applied", "guidance": req.guidance, "result": fix_res}
         return {"status": "Guidance applied", "guidance": req.guidance}
+    elif action in ("autofix", "auto_fix", "repair"):
+        fix_res = tools.auto_fix_drc()
+        if fix_res.get("success"):
+            if fix_res.get("netlist"):
+                await global_bus.broadcast({
+                    "type": "netlist_synthesized",
+                    "data": fix_res["netlist"]
+                })
+            if fix_res.get("vhdl_code"):
+                await global_bus.broadcast({
+                    "type": "circuit_designed",
+                    "data": {
+                        "vhdl_code": fix_res["vhdl_code"],
+                        "circuit_name": fix_res.get("circuit_name", "repaired_circuit")
+                    }
+                })
+        return {"status": "Auto-fix completed", "result": fix_res}
     elif action == "fault":
         if req.net_name:
             res = tools.inject_fault(req.net_name, req.fault_value)
@@ -465,6 +602,227 @@ async def agent_intervention(req: AgentInterventionRequest):
             return res
         return {"error": "Missing net_name"}
     return {"error": f"Unknown action {action}"}
+
+@app.post("/api/agent/auto-fix")
+async def auto_fix_circuit(req: AgentAutoFixRequest):
+    """
+    Direct 1-Click DRC Auto-Repair:
+    Ties floating CMOS input pins to safe logic rails ('0' or '1'),
+    resolves bus contention, clears injected faults, updates project files,
+    and returns a clean, synthesized netlist.
+    """
+    res = tools.auto_fix_drc(
+        project_id=req.project_id,
+        target_file=req.target_file,
+        vhdl_code=req.vhdl_code,
+        circuit_name=req.circuit_name,
+        issues=req.issues
+    )
+    if res.get("success"):
+        if res.get("netlist"):
+            await global_bus.broadcast({
+                "type": "netlist_synthesized",
+                "data": res["netlist"]
+            })
+        if res.get("vhdl_code"):
+            await global_bus.broadcast({
+                "type": "circuit_designed",
+                "data": {
+                    "vhdl_code": res["vhdl_code"],
+                    "circuit_name": res.get("circuit_name", "repaired_circuit")
+                }
+            })
+        await global_bus.broadcast({
+            "type": "agent_thought",
+            "data": {
+                "time": int(time.time() * 1000),
+                "state": "AUTO_FIX",
+                "action": "drc_repaired",
+                "thought": f"⚡ Auto-Fix Complete: {len(res.get('repairs_applied', []))} DRC corrections applied. Netlist clean.",
+                "details": res
+            }
+        })
+    return res
+
+
+# ==========================================
+# Turnkey Hardware Lifecycle REST Endpoints
+# ==========================================
+
+class MultiphysicsRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    clock_mhz: Optional[float] = 350.0
+    trace_length_mm: Optional[float] = 45.0
+    supply_voltage: Optional[float] = 1.0
+    load_current_a: Optional[float] = 3.5
+    ambient_temp_c: Optional[float] = 25.0
+    airflow_mps: Optional[float] = 1.5
+    board_thickness_mm: Optional[float] = 1.6
+    drop_height_m: Optional[float] = 1.5
+
+class DfmStackupRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    layer_count: Optional[int] = 8
+    substrate_family: Optional[str] = "Rogers_RO4350B"
+    trace_width_mil: Optional[float] = 3.5
+    trace_spacing_mil: Optional[float] = 3.5
+    min_via_drill_mil: Optional[float] = 6.0
+    use_nitrogen_purge: Optional[bool] = True
+
+class QaInspectionRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    bga_package: Optional[str] = "BGA256_0.5mm_Pitch"
+    ball_count: Optional[int] = 64
+    pitch_mm: Optional[float] = 0.5
+    total_nets: Optional[int] = 48
+    fundamental_clock_mhz: Optional[float] = 350.0
+
+class FirmwareSecurityRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Design"
+    base_address_hex: Optional[str] = "0x40000000"
+    device_serial_id: Optional[str] = None
+    test_cycles: Optional[int] = 1000
+
+class SupplyChainRequest(BaseModel):
+    circuit_name: Optional[str] = "CircuitForge_Main_System"
+    target_volume: Optional[int] = 1000
+    action: Optional[str] = "bom"
+    original_mpn: Optional[str] = None
+    substitute_mpn: Optional[str] = None
+
+@app.post("/api/lifecycle/multiphysics")
+async def run_multiphysics_simulation_endpoint(req: MultiphysicsRequest):
+    return multiphysics_engine.run_multiphysics_co_simulation(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        clock_mhz=req.clock_mhz or 350.0,
+        trace_length_mm=req.trace_length_mm or 45.0,
+        supply_voltage=req.supply_voltage or 1.0,
+        load_current_a=req.load_current_a or 3.5,
+        ambient_temp_c=req.ambient_temp_c or 25.0,
+        airflow_mps=req.airflow_mps or 1.5,
+        board_thickness_mm=req.board_thickness_mm or 1.6,
+        drop_height_m=req.drop_height_m or 1.5
+    )
+
+@app.post("/api/lifecycle/dfm-stackup")
+async def run_dfm_stackup_endpoint(req: DfmStackupRequest):
+    return forging_engine.run_forging_manufacturability_audit(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        layer_count=req.layer_count or 8,
+        substrate_family=req.substrate_family or "Rogers_RO4350B",
+        trace_width_mil=req.trace_width_mil or 3.5,
+        trace_spacing_mil=req.trace_spacing_mil or 3.5,
+        min_via_drill_mil=req.min_via_drill_mil or 6.0,
+        use_nitrogen_purge=req.use_nitrogen_purge if req.use_nitrogen_purge is not None else True
+    )
+
+@app.post("/api/lifecycle/qa-inspection")
+async def run_qa_inspection_endpoint(req: QaInspectionRequest):
+    return qa_testing_engine.run_full_qa_certification(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        bga_package=req.bga_package or "BGA256_0.5mm_Pitch",
+        ball_count=req.ball_count or 64,
+        pitch_mm=req.pitch_mm or 0.5,
+        total_nets=req.total_nets or 48,
+        fundamental_clock_mhz=req.fundamental_clock_mhz or 350.0
+    )
+
+@app.post("/api/lifecycle/firmware-security")
+async def run_firmware_security_endpoint(req: FirmwareSecurityRequest):
+    return firmware_security_engine.run_firmware_and_security_suite(
+        circuit_name=req.circuit_name or "CircuitForge_Design",
+        base_address_hex=req.base_address_hex or "0x40000000",
+        device_serial_id=req.device_serial_id,
+        test_cycles=req.test_cycles or 1000
+    )
+
+@app.post("/api/lifecycle/supply-chain")
+async def run_supply_chain_endpoint(req: SupplyChainRequest):
+    if req.action == "substitute" and req.original_mpn and req.substitute_mpn:
+        return supply_chain_engine.substitute_component(
+            original_mpn=req.original_mpn,
+            target_alternative_mpn=req.substitute_mpn
+        )
+    return supply_chain_engine.generate_project_bom(
+        circuit_name=req.circuit_name or "CircuitForge_Main_System",
+        target_volume=req.target_volume or 1000
+    )
+
+
+# ========================================================
+# Embedded Platforms & Microprocessor Endpoints
+# ========================================================
+
+class PlatformGenerateRequest(BaseModel):
+    platform_id: str = "esp32_s3"
+    target_language: str = "c_cpp"
+    project_name: str = "iot_edge_controller"
+    peripherals: Optional[List[str]] = None
+
+class PlatformScaffoldRequest(BaseModel):
+    platform_id: str = "esp32_s3"
+    target_language: str = "c_cpp"
+    project_name: str = "iot_edge_controller"
+    description: Optional[str] = None
+
+@app.get("/api/platforms/catalog")
+def get_platforms_catalog_endpoint():
+    return embedded_platforms_engine.get_platforms_catalog()
+
+@app.post("/api/platforms/generate")
+def generate_platform_firmware_endpoint(req: PlatformGenerateRequest):
+    return embedded_platforms_engine.generate_platform_firmware_and_config(
+        platform_id=req.platform_id,
+        target_language=req.target_language,
+        project_name=req.project_name,
+        peripherals=req.peripherals
+    )
+
+@app.post("/api/platforms/scaffold-project")
+def scaffold_platform_project_endpoint(req: PlatformScaffoldRequest):
+    return project_mgr.create_embedded_platform_project(
+        platform_id=req.platform_id,
+        target_language=req.target_language,
+        project_name=req.project_name,
+        description=req.description
+    )
+
+
+class CodeValidateRequest(BaseModel):
+    code: str
+    language: str = "vhdl"
+    file_path: Optional[str] = None
+
+class LifecycleExportRequest(BaseModel):
+    project_id: str = "scale1_full_adder"
+    artifact_type: str = "bom"
+    circuit_name: str = "CircuitForge_System"
+    payload: Optional[Any] = None
+
+@app.post("/api/code/validate")
+def validate_code_endpoint(req: CodeValidateRequest):
+    return tools.eda_validate_code(
+        code=req.code,
+        language=req.language,
+        file_path=req.file_path
+    )
+
+@app.post("/api/lifecycle/export-artifact")
+async def export_lifecycle_artifact_endpoint(req: LifecycleExportRequest):
+    res = tools.eda_export_lifecycle_artifact(
+        project_id=req.project_id,
+        artifact_type=req.artifact_type,
+        circuit_name=req.circuit_name,
+        payload=req.payload
+    )
+    if res.get("success"):
+        await global_bus.broadcast({
+            "type": "project_files_updated",
+            "timestamp": time.time(),
+            "data": {"project_id": req.project_id, "action": "export_lifecycle_artifact", "artifact_type": req.artifact_type}
+        })
+    return res
+
 
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):

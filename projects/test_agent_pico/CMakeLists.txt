@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.13)
+include(pico_sdk_import.cmake)
+project(Agent_Pico_Test C CXX ASM)
+pico_sdk_init()
+add_executable(Agent_Pico_Test main.c)
+target_link_libraries(Agent_Pico_Test pico_stdlib pico_multicore hardware_i2c hardware_pio)
+pico_add_extra_outputs(Agent_Pico_Test)

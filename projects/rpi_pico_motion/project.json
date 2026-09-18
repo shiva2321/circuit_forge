@@ -1,0 +1,10 @@
+{
+  "id": "rpi_pico_motion",
+  "name": "Raspberry Pi Pico RP2040 Controller",
+  "scale": 3,
+  "scale_label": "Scale 3: RP2040 Dual-Core",
+  "description": "RP2040 dual-core ARM Cortex-M0+ with custom hardware PIO state machine and Pico SDK C driver.",
+  "created_at": 1789527387.981241,
+  "last_modified": 1789527387.981241,
+  "top_file": "main.c"
+}

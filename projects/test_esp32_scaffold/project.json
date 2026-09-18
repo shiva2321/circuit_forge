@@ -1,0 +1,15 @@
+{
+  "id": "test_esp32_scaffold",
+  "name": "Test_ESP32_Scaffold",
+  "platform_id": "esp32_s3",
+  "platform_name": "Espressif ESP32-S3",
+  "soc": "ESP32-S3-WROOM-1",
+  "architecture": "Dual-core 32-bit Xtensa LX7 @ 240MHz + AI Vector Instructions",
+  "target_language": "c_cpp",
+  "scale": 3,
+  "scale_label": "Scale 3: Espressif ESP32-S3",
+  "description": "Espressif ESP32-S3 (Dual-core 32-bit Xtensa LX7 @ 240MHz + AI Vector Instructions) embedded system project",
+  "created_at": 1789747610.6516783,
+  "last_modified": 1789747610.6516783,
+  "top_file": "main/app_main.c"
+}

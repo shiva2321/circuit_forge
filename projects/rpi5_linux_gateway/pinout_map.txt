@@ -1,0 +1,5 @@
+Raspberry Pi 5 40-Pin Header Configuration:
+Pin 1: 3V3 Power
+Pin 6: GND
+Pin 11: GPIO 17 -> LED
+Pin 3/5: GPIO 2/3 -> I2C1

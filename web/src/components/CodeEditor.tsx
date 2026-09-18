@@ -29,7 +29,11 @@ import {
   File,
   PanelLeftClose,
   PanelLeft,
+  Bot,
+  Eye,
+  Columns,
 } from 'lucide-react';
+import { MarkdownDocViewer } from './MarkdownDocViewer';
 import {
   getToolchainStatus,
   getProjectTree,
@@ -38,8 +42,48 @@ import {
   createProjectEntry,
   deleteProjectEntry,
   renameProjectEntry,
+  validateCode,
   FileTreeNode,
 } from '../services/api';
+
+export function getMonacoLanguage(filePath: string): string {
+  const lower = (filePath || '').toLowerCase();
+  if (lower.endsWith('.vhd') || lower.endsWith('.vhdl')) return 'vhdl';
+  if (lower.endsWith('.v') || lower.endsWith('.sv') || lower.endsWith('.vh')) return 'verilog';
+  if (lower.endsWith('.c') || lower.endsWith('.h')) return 'c';
+  if (lower.endsWith('.cpp') || lower.endsWith('.hpp') || lower.endsWith('.cc')) return 'cpp';
+  if (lower.endsWith('.rs')) return 'rust';
+  if (lower.endsWith('.py')) return 'python';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.ini') || lower.endsWith('.toml') || lower.endsWith('.cfg')) return 'ini';
+  if (lower.endsWith('.md')) return 'markdown';
+  if (lower.endsWith('.service') || lower.endsWith('.txt') || lower.endsWith('.sdc') || lower.endsWith('.xdc')) return 'plaintext';
+  return 'plaintext';
+}
+
+export function isDesignRtlFile(filePath: string): boolean {
+  const lower = (filePath || '').toLowerCase();
+  if (!lower.endsWith('.vhd') && !lower.endsWith('.vhdl') && !lower.endsWith('.v') && !lower.endsWith('.sv')) {
+    return false;
+  }
+  if (
+    lower.includes('tb/') ||
+    lower.includes('/tb/') ||
+    lower.includes('\\tb\\') ||
+    lower.includes('_tb.') ||
+    lower.includes('_test.') ||
+    lower.includes('testbench') ||
+    lower.includes('test_')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function normalizePath(p: string): string {
+  if (!p) return '';
+  return p.replace(/\\/g, '/').replace(/^\/+/, '');
+}
 
 export interface FileItem {
   name: string;
@@ -62,6 +106,14 @@ export interface CodeEditorProps {
   isSplitView?: boolean;
   /** Increment this value to force a project tree reload (e.g. after agent materializes new files) */
   reloadVersion?: number;
+  targetOpenFilePath?: string;
+  topFilePath?: string;
+  onTopFileChange?: (path: string) => void;
+  isAutosaveEnabled?: boolean;
+  onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'idle', text?: string) => void;
+  onAddToAgentContext?: (item: { type: 'code_range' | 'file'; label: string; data: any }) => void;
+  onActiveFileChange?: (filePath: string) => void;
+  onConsumeTargetOpenFilePath?: () => void;
 }
 
 const DEFAULT_STARTER_FILES: FileItem[] = [
@@ -303,14 +355,71 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   syncStatus = 'synced',
   isSplitView = false,
   reloadVersion,
+  targetOpenFilePath,
+  topFilePath,
+  onTopFileChange,
+  isAutosaveEnabled = true,
+  onSaveStatusChange,
+  onAddToAgentContext,
+  onActiveFileChange,
+  onConsumeTargetOpenFilePath,
 }) => {
-  // Explorer Sidebar State (compact default if in side-by-side split view)
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => !isSplitView);
+  // Explorer Sidebar State (open by default for direct file access)
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [projectTree, setProjectTree] = useState<FileTreeNode[]>([]);
   const [isTreeLoading, setIsTreeLoading] = useState<boolean>(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     () => new Set(['src', 'tb', 'constraints'])
   );
+
+  // Resizable Explorer Sidebar State (persisted to localStorage)
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('circuitforge_editor_tree_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 160 && parsed <= 600) return parsed;
+      }
+    } catch {}
+    return 260; // default 260px
+  });
+  const [isResizingTree, setIsResizingTree] = useState<boolean>(false);
+
+  const handleTreeResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingTree(true);
+    const startX = e.clientX;
+    const startWidth = treeWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(160, Math.min(600, startWidth + (moveEvent.clientX - startX)));
+      setTreeWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setIsResizingTree(false);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setTreeWidth((finalWidth) => {
+        try { localStorage.setItem('circuitforge_editor_tree_width', finalWidth.toString()); } catch {}
+        return finalWidth;
+      });
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Track the designated top design file for the canvas (e.g. 'src/full_adder.vhd')
+  const [internalTopFilePath, setInternalTopFilePath] = useState<string>(
+    topFilePath || 'src/full_adder.vhd'
+  );
+
+  useEffect(() => {
+    if (topFilePath) {
+      setInternalTopFilePath(topFilePath);
+    }
+  }, [topFilePath]);
 
   // Multi-File Project State (Tabs)
   const [files, setFiles] = useState<FileItem[]>(() => {
@@ -320,8 +429,15 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     }
     return initial;
   });
-  const [activeFilePath, setActiveFilePath] = useState<string>('src/full_adder.vhd');
+  const [activeFilePath, setActiveFilePath] = useState<string>(() => {
+    if (activeProjectId) {
+      const saved = localStorage.getItem('circuitforge_active_file_' + activeProjectId);
+      if (saved) return normalizePath(saved);
+    }
+    return 'src/full_adder.vhd';
+  });
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Explorer Modals State
   const [newEntryModal, setNewEntryModal] = useState<{
@@ -351,12 +467,95 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [toolchainStatus, setToolchainStatus] = useState<any>(null);
 
   const [copied, setCopied] = useState(false);
+  const [addedFeedback, setAddedFeedback] = useState<string | null>(null);
+  const [mdViewMode, setMdViewMode] = useState<'editor' | 'preview' | 'split'>('split');
+  const [internalLintMessages, setInternalLintMessages] = useState<Array<{ line: number; severity: string; message: string; rule_id: string }>>([]);
+  const [isValidatingMultiLang, setIsValidatingMultiLang] = useState<boolean>(false);
   const editorRef = useRef<any>(null);
+  // Track active project ID to only reset tabs on project switch, not tree refresh
+  const loadedProjectIdRef = useRef<string>('');
+  // Flag to suppress the Monaco onChange callback during programmatic setValue() calls
+  // (prevents canvas→code→synthesize feedback loops and tab switch triggers)
+  const isProgrammaticUpdateRef = useRef<boolean>(false);
 
   // Load Toolchain Status on mount
   useEffect(() => {
     getToolchainStatus().then(setToolchainStatus).catch(() => {});
   }, []);
+
+  // Safe tab switcher that suppresses spurious Monaco onChange events
+  const handleSelectTab = useCallback((rawPath: string) => {
+    const targetPath = normalizePath(rawPath);
+    setActiveFilePath((currentActive) => {
+      if (normalizePath(currentActive) === targetPath) return currentActive;
+      isProgrammaticUpdateRef.current = true;
+      Promise.resolve().then(() => {
+        isProgrammaticUpdateRef.current = false;
+      });
+      return targetPath;
+    });
+    onActiveFileChange?.(targetPath);
+    if (activeProjectId) {
+      try {
+        localStorage.setItem('circuitforge_active_file_' + activeProjectId, targetPath);
+      } catch (e) {}
+    }
+  }, [activeProjectId, onActiveFileChange]);
+
+  // Open file by relative path helper (independent of files state to prevent infinite loops)
+  const openFileByPath = useCallback(
+    async (rawPath: string) => {
+      if (!rawPath) return;
+      const targetPath = normalizePath(rawPath);
+
+      let alreadyOpen = false;
+      setFiles((prev) => {
+        if (prev.some((f) => normalizePath(f.path) === targetPath)) {
+          alreadyOpen = true;
+        }
+        return prev;
+      });
+
+      if (alreadyOpen) {
+        handleSelectTab(targetPath);
+        return;
+      }
+
+      try {
+        const res = await readProjectFile(activeProjectId, targetPath);
+        if (res && res.content !== undefined) {
+          const name = targetPath.split('/').pop() || targetPath;
+          const newFile: FileItem = {
+            name,
+            path: targetPath,
+            code: res.content,
+            isDirty: false,
+          };
+          setFiles((prev) => {
+            const filtered = prev.filter((f) => normalizePath(f.path) !== targetPath);
+            return [...filtered, newFile];
+          });
+          handleSelectTab(targetPath);
+        }
+      } catch (err) {
+        console.error('Failed to read file from backend:', err);
+      }
+    },
+    [activeProjectId, handleSelectTab]
+  );
+
+  const lastHandledTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (targetOpenFilePath) {
+      const norm = normalizePath(targetOpenFilePath);
+      if (norm && norm !== lastHandledTargetRef.current) {
+        lastHandledTargetRef.current = norm;
+        openFileByPath(norm);
+        onConsumeTargetOpenFilePath?.();
+      }
+    }
+  }, [targetOpenFilePath, openFileByPath, onConsumeTargetOpenFilePath]);
 
   // Fetch Tree & Files from Project Manager
   const loadTree = useCallback(
@@ -373,33 +572,130 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           });
           setExpandedFolders(folders);
 
-          // Find first VHDL file or top_file
-          const findFirstFile = (nodes: FileTreeNode[]): FileTreeNode | null => {
-            for (const n of nodes) {
-              if (!n.is_dir && n.name.endsWith('.vhd')) return n;
-              if (n.is_dir && n.children) {
-                const found = findFirstFile(n.children);
-                if (found) return found;
+          // 1. Check if project.json specifies a top_file
+          let designatedTop: string | null = null;
+          const projMetaNode = res.tree.find((n) => n.name === 'project.json');
+          if (projMetaNode) {
+            try {
+              const metaData = await readProjectFile(projId, 'project.json');
+              if (metaData && metaData.content) {
+                const parsed = JSON.parse(metaData.content);
+                if (parsed.top_file) {
+                  designatedTop = parsed.top_file;
+                }
               }
+            } catch (e) {
+              // ignore parse errors
             }
-            return null;
+          }
+
+          // 2. Find first design source code file (prioritize src/ and rtl/ directories, exclude testbenches)
+          const findFirstFile = (nodes: FileTreeNode[]): FileTreeNode | null => {
+            const allFiles: FileTreeNode[] = [];
+            const collect = (list: FileTreeNode[]) => {
+              for (const item of list) {
+                if (item.is_dir && item.children) {
+                  collect(item.children);
+                } else if (!item.is_dir) {
+                  allFiles.push(item);
+                }
+              }
+            };
+            collect(nodes);
+
+            // Prefer primary RTL HDL in src/ or rtl/ (non-testbench)
+            const primarySource = allFiles.find(
+              (f) =>
+                (f.path.includes('src/') || f.path.includes('rtl/')) &&
+                isDesignRtlFile(f.path)
+            );
+            if (primarySource) return primarySource;
+
+            // Any design RTL file
+            const anySource = allFiles.find((f) => isDesignRtlFile(f.path));
+            if (anySource) return anySource;
+
+            // Any non-meta file
+            const nonMeta = allFiles.find((f) => !f.name.endsWith('.json') && !f.name.endsWith('.sdc'));
+            if (nonMeta) return nonMeta;
+
+            return allFiles[0] || null;
           };
 
-          const top = findFirstFile(res.tree);
-          if (top) {
+          const isNewProject = loadedProjectIdRef.current !== projId;
+          loadedProjectIdRef.current = projId;
+
+          const detectedTop = designatedTop || findFirstFile(res.tree)?.path || null;
+          if (detectedTop) {
+            setInternalTopFilePath(detectedTop);
+            onTopFileChange?.(detectedTop);
+
             try {
-              const fileData = await readProjectFile(projId, top.path);
+              const fileData = await readProjectFile(projId, detectedTop);
               if (fileData && fileData.content !== undefined) {
-                setFiles([
-                  {
-                    name: top.name,
-                    path: top.path,
-                    code: fileData.content,
-                    isDirty: false,
-                  },
-                ]);
-                setActiveFilePath(top.path);
-                onChangeCode(fileData.content);
+                const topName = detectedTop.split('/').pop() || detectedTop;
+                let initialCode = fileData.content;
+                if (isAutosaveEnabled) {
+                  const draft = localStorage.getItem(`circuitforge_draft_${projId}_${detectedTop}`);
+                  if (draft !== null) {
+                    initialCode = draft;
+                  }
+                }
+
+                const topItem: FileItem = {
+                  name: topName,
+                  path: detectedTop,
+                  code: initialCode,
+                  isDirty: false,
+                };
+
+                if (isNewProject) {
+                  // Check if there were multiple open tabs saved for this project
+                  const savedTabsRaw = isAutosaveEnabled ? localStorage.getItem('circuitforge_open_tabs_' + projId) : null;
+                  const savedActiveFile = isAutosaveEnabled ? localStorage.getItem('circuitforge_active_file_' + projId) : null;
+                  const restoredFiles: FileItem[] = [topItem];
+
+                  if (savedTabsRaw) {
+                    try {
+                      const tabPaths: string[] = JSON.parse(savedTabsRaw);
+                      const normTop = normalizePath(detectedTop);
+                      const additionalPaths = tabPaths.map(normalizePath).filter((p) => p !== normTop);
+                      for (const addPath of additionalPaths) {
+                        if (restoredFiles.some((f) => normalizePath(f.path) === addPath)) continue;
+                        try {
+                          const fileRes = await readProjectFile(projId, addPath);
+                          if (fileRes && fileRes.content !== undefined) {
+                            const fDraft = isAutosaveEnabled ? localStorage.getItem(`circuitforge_draft_${projId}_${addPath}`) : null;
+                            restoredFiles.push({
+                              name: addPath.split('/').pop() || addPath,
+                              path: addPath,
+                              code: fDraft !== null ? fDraft : fileRes.content,
+                              isDirty: false,
+                            });
+                          }
+                        } catch (e) {}
+                      }
+                    } catch (e) {}
+                  }
+
+                  setFiles(restoredFiles);
+                  const normActive = savedActiveFile ? normalizePath(savedActiveFile) : null;
+                  const activeToSelect = normActive && restoredFiles.some((f) => normalizePath(f.path) === normActive)
+                    ? normActive
+                    : normalizePath(detectedTop);
+                  setActiveFilePath(activeToSelect);
+                  // Synchronize design file with canvas on new project load
+                  onChangeCode(initialCode);
+                } else {
+                  setFiles((prev) => {
+                    const normTop = normalizePath(detectedTop);
+                    const exists = prev.some((f) => normalizePath(f.path) === normTop);
+                    if (!exists) return [topItem, ...prev];
+                    return prev.map((f) =>
+                      normalizePath(f.path) === normTop ? { ...f, code: initialCode } : f
+                    );
+                  });
+                }
               }
             } catch (err) {
               console.warn('Failed to load initial project file content:', err);
@@ -412,7 +708,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         setIsTreeLoading(false);
       }
     },
-    [onChangeCode]
+    [onChangeCode, onTopFileChange]
   );
 
   // Reload tree when activeProjectId changes
@@ -420,7 +716,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     if (activeProjectId) {
       loadTree(activeProjectId);
     }
-  }, [activeProjectId, loadTree]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
 
   // External reload trigger — fires when parent bumps reloadVersion (e.g. after agent materializes files)
   useEffect(() => {
@@ -430,14 +727,54 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadVersion]);
 
-  // Sync external code prop if editing top file
+  // Sync external code prop (from canvas→code direction or auto-repair)
+  // Updates the designated top design file or active design file, ensuring Monaco & buffers stay synchronized
   useEffect(() => {
-    if (code && code.trim()) {
-      setFiles((prev) =>
-        prev.map((f) => (f.path === activeFilePath && !f.isDirty ? { ...f, code } : f))
+    if (!code || !code.trim()) return;
+
+    const normTop = normalizePath(topFilePath || internalTopFilePath || '');
+    const normActive = normalizePath(activeFilePath);
+
+    setFiles((prev) => {
+      const targetFound = prev.some(
+        (f) =>
+          (normTop && normalizePath(f.path) === normTop) ||
+          (normActive && normalizePath(f.path) === normActive && isDesignRtlFile(f.path))
       );
+      if (!targetFound && (normTop || normActive)) {
+        const fallbackPath = normActive && isDesignRtlFile(normActive) ? normActive : normTop;
+        const name = fallbackPath.split('/').pop() || fallbackPath;
+        return [{ name, path: fallbackPath, code, isDirty: false }, ...prev];
+      }
+      return prev.map((f) => {
+        const normF = normalizePath(f.path);
+        const isTarget = normTop
+          ? normF === normTop || (normActive && normF === normActive && isDesignRtlFile(f.path))
+          : normActive && normF === normActive;
+        if (isTarget) {
+          return { ...f, code, isDirty: false };
+        }
+        return f;
+      });
+    });
+
+    // Only update Monaco editor if the user is currently viewing the top design file or active RTL file!
+    const isViewingTarget = normTop
+      ? normActive === normTop || isDesignRtlFile(activeFilePath)
+      : isDesignRtlFile(activeFilePath);
+
+    if (isViewingTarget && editorRef.current && editorRef.current.getValue() !== code) {
+      const pos = editorRef.current.getPosition();
+      isProgrammaticUpdateRef.current = true;
+      editorRef.current.setValue(code);
+      Promise.resolve().then(() => {
+        isProgrammaticUpdateRef.current = false;
+      });
+      if (pos) {
+        editorRef.current.setPosition(pos);
+      }
     }
-  }, [code, activeFilePath]);
+  }, [code, topFilePath, internalTopFilePath, activeFilePath]);
 
   // Toggle Folder Expansion
   const toggleFolder = (folderPath: string) => {
@@ -454,26 +791,36 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
   // Open file in editor (from tree click)
   const handleOpenFileFromTree = async (node: FileTreeNode) => {
-    const existing = files.find((f) => f.path === node.path);
-    if (existing) {
-      setActiveFilePath(existing.path);
+    if (node.is_dir) return;
+    const targetPath = normalizePath(node.path);
+
+    let alreadyOpen = false;
+    setFiles((prev) => {
+      if (prev.some((f) => normalizePath(f.path) === targetPath)) {
+        alreadyOpen = true;
+      }
+      return prev;
+    });
+
+    if (alreadyOpen) {
+      handleSelectTab(targetPath);
       return;
     }
 
     try {
-      const res = await readProjectFile(activeProjectId, node.path);
+      const res = await readProjectFile(activeProjectId, targetPath);
       if (res && res.content !== undefined) {
         const newFile: FileItem = {
           name: node.name,
-          path: node.path,
+          path: targetPath,
           code: res.content,
           isDirty: false,
         };
-        setFiles((prev) => [...prev, newFile]);
-        setActiveFilePath(node.path);
-        if (node.name.endsWith('.vhd')) {
-          onChangeCode(res.content);
-        }
+        setFiles((prev) => {
+          const filtered = prev.filter((f) => normalizePath(f.path) !== targetPath);
+          return [...filtered, newFile];
+        });
+        handleSelectTab(targetPath);
       }
     } catch (err) {
       console.error('Failed to read file from backend:', err);
@@ -481,22 +828,105 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   };
 
   // Close file tab
-  const handleCloseTab = (filePath: string) => {
-    if (files.length <= 1) return;
-    const remaining = files.filter((f) => f.path !== filePath);
-    setFiles(remaining);
-    if (activeFilePath === filePath) {
-      setActiveFilePath(remaining[0].path);
+  const handleCloseTab = (rawPath: string) => {
+    const filePath = normalizePath(rawPath);
+    setFiles((prev) => {
+      const remaining = prev.filter((f) => normalizePath(f.path) !== filePath);
+      if (remaining.length === 0) {
+        const topPath = normalizePath(topFilePath || internalTopFilePath || 'src/full_adder.vhd');
+        readProjectFile(activeProjectId, topPath).then((res) => {
+          if (res && res.content !== undefined) {
+            const name = topPath.split('/').pop() || topPath;
+            setFiles([{ name, path: topPath, code: res.content, isDirty: false }]);
+            handleSelectTab(topPath);
+          }
+        }).catch(() => {});
+        return prev;
+      }
+
+      if (normalizePath(activeFilePath) === filePath) {
+        const closedIdx = prev.findIndex((f) => normalizePath(f.path) === filePath);
+        const nextTab = remaining[Math.min(closedIdx, remaining.length - 1)];
+        if (nextTab) {
+          handleSelectTab(nextTab.path);
+        }
+      }
+
+      if (activeProjectId) {
+        try {
+          const paths = remaining.map((f) => normalizePath(f.path));
+          localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify(paths));
+        } catch (e) {}
+      }
+
+      return remaining;
+    });
+
+    if (lastHandledTargetRef.current === filePath) {
+      lastHandledTargetRef.current = null;
     }
   };
 
-  // Monaco editor change handler
+  const handleCloseOtherTabs = (rawPath: string) => {
+    const keepPath = normalizePath(rawPath);
+    setFiles((prev) => {
+      const remaining = prev.filter((f) => normalizePath(f.path) === keepPath);
+      if (activeProjectId) {
+        try {
+          localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify([keepPath]));
+        } catch (e) {}
+      }
+      return remaining;
+    });
+    handleSelectTab(keepPath);
+  };
+
+  const handleCloseAllTabs = () => {
+    const topPath = normalizePath(topFilePath || internalTopFilePath || 'src/full_adder.vhd');
+    readProjectFile(activeProjectId, topPath).then((res) => {
+      if (res && res.content !== undefined) {
+        const name = topPath.split('/').pop() || topPath;
+        setFiles([{ name, path: topPath, code: res.content, isDirty: false }]);
+        handleSelectTab(topPath);
+        if (activeProjectId) {
+          try {
+            localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify([topPath]));
+          } catch (e) {}
+        }
+      }
+    }).catch(() => {});
+  };
+
+  // Monaco editor change handler — only forwards user edits to App.tsx, not programmatic updates
   const handleEditorChange = (newCode: string) => {
     setFiles((prev) =>
       prev.map((f) => (f.path === activeFilePath ? { ...f, code: newCode, isDirty: true } : f))
     );
-    const cur = files.find((f) => f.path === activeFilePath);
-    if (cur && cur.name.endsWith('.vhd')) {
+    // Skip onChangeCode if this is a programmatic setValue() or tab switch
+    if (isProgrammaticUpdateRef.current) return;
+
+    if (isAutosaveEnabled && activeProjectId && activeFilePath) {
+      try {
+        localStorage.setItem(`circuitforge_draft_${activeProjectId}_${activeFilePath}`, newCode);
+      } catch (e) {}
+      onSaveStatusChange?.('dirty', 'Unsaved edits');
+
+      // Debounce automatic save to backend filesystem (1200ms)
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = setTimeout(() => {
+        handleSaveActiveFile();
+      }, 1200);
+    } else {
+      onSaveStatusChange?.('dirty', 'Unsaved edits');
+    }
+
+    // ONLY auto-sync with the schematic canvas if the file currently being edited is the top RTL design file!
+    const currentTop = topFilePath || internalTopFilePath;
+    const isTopDesignFile = currentTop
+      ? activeFilePath === currentTop
+      : isDesignRtlFile(activeFilePath) && activeFilePath.includes('src/');
+
+    if (isTopDesignFile) {
       onChangeCode(newCode);
     }
   };
@@ -507,27 +937,74 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     if (!cur) return;
 
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
+    onSaveStatusChange?.('saving', 'Saving...');
 
     try {
       await writeProjectFile(activeProjectId, cur.path, currentCode);
+      if (activeProjectId && cur.path) {
+        try {
+          localStorage.removeItem(`circuitforge_draft_${activeProjectId}_${cur.path}`);
+        } catch (e) {}
+      }
       setFiles((prev) =>
         prev.map((f) => (f.path === cur.path ? { ...f, code: currentCode, isDirty: false } : f))
       );
-      if (cur.name.endsWith('.vhd')) {
+      const currentTop = topFilePath || internalTopFilePath;
+      const isTopDesignFile = currentTop
+        ? cur.path === currentTop
+        : isDesignRtlFile(cur.path) && cur.path.includes('src/');
+      if (isTopDesignFile) {
         onChangeCode(currentCode);
       }
       setSaveStatus(`Saved ${cur.name}`);
+      onSaveStatusChange?.('saved', 'All saved');
       setTimeout(() => setSaveStatus(null), 2500);
     } catch (err) {
       console.error('Save failed:', err);
-      // Fallback local save
+      // Fallback local save in draft
       setFiles((prev) =>
         prev.map((f) => (f.path === cur.path ? { ...f, code: currentCode, isDirty: false } : f))
       );
       setSaveStatus(`Saved (Local)`);
+      onSaveStatusChange?.('saved', 'Saved (Local)');
       setTimeout(() => setSaveStatus(null), 2500);
     }
   };
+
+  // Persist open tabs and active file to localStorage
+  useEffect(() => {
+    if (!isAutosaveEnabled || !activeProjectId) return;
+    try {
+      localStorage.setItem('circuitforge_active_file_' + activeProjectId, activeFilePath);
+      localStorage.setItem(
+        'circuitforge_open_tabs_' + activeProjectId,
+        JSON.stringify(files.map((f) => f.path))
+      );
+    } catch (e) {}
+  }, [files, activeFilePath, isAutosaveEnabled, activeProjectId]);
+
+  // Window beforeunload safety listener
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const anyDirty = files.some((f) => f.isDirty);
+      if (isAutosaveEnabled) {
+        // Synchronously save drafts of all dirty open files into localStorage
+        files.forEach((f) => {
+          if (f.isDirty) {
+            try {
+              localStorage.setItem(`circuitforge_draft_${activeProjectId}_${f.path}`, f.code);
+            } catch (err) {}
+          }
+        });
+      } else if (anyDirty) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [files, activeProjectId, isAutosaveEnabled]);
 
   // Keyboard shortcut: Ctrl+S or Cmd+S
   useEffect(() => {
@@ -641,21 +1118,37 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRunLintClick = () => {
+  const handleRunLintClick = async () => {
     const cur = files.find((f) => f.path === activeFilePath) || files[0];
+    if (!cur) return;
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
-    if (cur.name.endsWith('.vhd')) {
+    const lang = getMonacoLanguage(cur.name);
+
+    if (lang === 'vhdl') {
       onChangeCode(currentCode);
+      onRunLint(currentCode);
+      setInternalLintMessages([]);
+    } else {
+      setIsValidatingMultiLang(true);
+      try {
+        const res = await validateCode({ code: currentCode, language: lang, file_path: cur.path });
+        setInternalLintMessages(res.messages || []);
+      } catch (e) {
+        console.error('Validation failed', e);
+      } finally {
+        setIsValidatingMultiLang(false);
+      }
     }
-    onRunLint(currentCode);
   };
 
   const handleSynthesizeClick = () => {
     const cur = files.find((f) => f.path === activeFilePath) || files[0];
     const currentCode = editorRef.current ? editorRef.current.getValue() : cur.code;
-    if (cur.name.endsWith('.vhd')) {
-      onChangeCode(currentCode);
+    if (cur) {
+      setInternalTopFilePath(cur.path);
+      onTopFileChange?.(cur.path);
     }
+    onChangeCode(currentCode);
     onSynthesizeAndSimulate(currentCode);
   };
 
@@ -763,18 +1256,22 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   };
 
   const activeFile = files.find((f) => f.path === activeFilePath) || files[0];
-  const errorCount = lintMessages.filter((m) => m.severity === 'error').length;
-  const warningCount = lintMessages.filter((m) => m.severity === 'warning').length;
+  const activeLang = getMonacoLanguage(activeFile?.name || '');
+  const isHdl = activeLang === 'vhdl' || activeLang === 'verilog';
+  const isMarkdown = activeLang === 'markdown' || (activeFile?.name || '').toLowerCase().endsWith('.md') || (activeFile?.name || '').toLowerCase().endsWith('.markdown');
+  const activeDiagnostics = internalLintMessages.length > 0 ? internalLintMessages : lintMessages;
+  const errorCount = activeDiagnostics.filter((m) => m.severity === 'error').length;
+  const warningCount = activeDiagnostics.filter((m) => m.severity === 'warning').length;
 
   return (
     <div className="flex flex-col h-full bg-slate-950 text-slate-200 select-none">
       {/* File Tabs & Project Header Bar */}
       <div className="h-10 border-b border-slate-800 bg-slate-900/90 px-3 flex items-center justify-between z-10 backdrop-blur">
-        {/* Toggle Explorer + Scrollable File Tabs */}
-        <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar min-w-0 flex-1">
+        {/* Toggle Explorer + Scrollable File Tabs + Pinned New File (+) Button */}
+        <div className="flex items-center space-x-1 min-w-0 flex-1">
           <button
             onClick={() => setIsSidebarOpen((prev) => !prev)}
-            className={`p-1.5 rounded-lg mr-2 transition cursor-pointer flex-shrink-0 ${
+            className={`p-1.5 rounded-lg mr-1.5 transition cursor-pointer flex-shrink-0 ${
               isSidebarOpen
                 ? 'bg-purple-900/60 text-purple-300 border border-purple-700/80 shadow'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
@@ -784,43 +1281,61 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             <FolderTree className="w-4 h-4" />
           </button>
 
-          {files.map((file) => {
-            const isActive = file.path === activeFilePath;
-            return (
-              <div
-                key={file.path}
-                onClick={() => setActiveFilePath(file.path)}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs font-mono cursor-pointer border-t-2 transition flex-shrink-0 ${
-                  isActive
-                    ? 'bg-slate-950 border-purple-500 text-slate-100 font-bold shadow'
-                    : 'bg-slate-900/50 border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-purple-400' : 'text-slate-500'}`} />
-                <span>{file.name}</span>
-                {file.isDirty && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400" title="Unsaved changes" />
-                )}
-                {files.length > 1 && (
+          {/* Scrollable File Tabs with Wheel support and Close Actions */}
+          <div
+            onWheel={(e) => { e.currentTarget.scrollLeft += e.deltaY; }}
+            className="flex items-center space-x-1 overflow-x-auto no-scrollbar min-w-0 flex-1 py-0.5"
+          >
+            {files.map((file) => {
+              const normPath = normalizePath(file.path);
+              const isActive = normPath === normalizePath(activeFilePath);
+              return (
+                <div
+                  key={normPath}
+                  onClick={() => handleSelectTab(normPath)}
+                  title={normPath}
+                  className={`group flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs font-mono cursor-pointer border-t-2 transition flex-shrink-0 ${
+                    isActive
+                      ? 'bg-slate-950 border-purple-500 text-slate-100 font-bold shadow'
+                      : 'bg-slate-900/50 border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-purple-400' : 'text-slate-500'}`} />
+                  <span className="max-w-[140px] truncate">{file.name}</span>
+                  {file.isDirty && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400" title="Unsaved changes" />
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleCloseTab(file.path);
+                      handleCloseTab(normPath);
                     }}
-                    className="p-0.5 hover:text-rose-400 opacity-50 hover:opacity-100 transition rounded"
-                    title="Close file tab"
+                    className="p-0.5 hover:text-rose-400 text-slate-500 hover:bg-slate-800 opacity-60 hover:opacity-100 transition rounded"
+                    title={`Close ${file.name}`}
                   >
                     <X className="w-3 h-3" />
                   </button>
-                )}
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
+          </div>
 
+          {/* Tab Action: Close All */}
+          {files.length > 1 && (
+            <button
+              onClick={handleCloseAllTabs}
+              className="px-1.5 py-1 text-[10px] font-mono text-slate-400 hover:text-rose-300 hover:bg-slate-800 rounded transition cursor-pointer flex-shrink-0"
+              title="Close all open tabs and reset to top file"
+            >
+              Close All
+            </button>
+          )}
+
+          {/* Pinned New File Button: Stays permanently visible no matter how many tabs are open */}
           <button
             onClick={() => setNewEntryModal({ open: true, isDir: false, parentPath: 'src' })}
-            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-purple-300 rounded-lg transition cursor-pointer flex-shrink-0"
-            title="Create New File"
+            className="p-1.5 hover:bg-purple-950/60 bg-slate-800/80 text-purple-300 hover:text-purple-200 border border-purple-800/50 hover:border-purple-600 rounded-lg transition cursor-pointer flex-shrink-0 shadow-sm ml-1"
+            title="Create New File (+)"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -925,23 +1440,75 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
           <button
             onClick={handleRunLintClick}
-            disabled={isLinting}
+            disabled={isLinting || isValidatingMultiLang}
             className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-purple-900/60 hover:bg-purple-800 border border-purple-700 text-purple-200 text-xs font-medium transition disabled:opacity-50 cursor-pointer"
-            title="Run Design Rule Check Linter"
+            title={isHdl ? "Run Design Rule Check Linter" : "Validate Code Syntax & Structure"}
           >
-            {isLinting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isLinting ? 'Linting...' : 'DRC Lint'}</span>
+            {isLinting || isValidatingMultiLang ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isLinting || isValidatingMultiLang ? 'Validating...' : isHdl ? 'DRC Lint' : 'Validate'}</span>
           </button>
 
-          <button
-            onClick={handleSynthesizeClick}
-            disabled={isSynthesizing}
-            className="flex items-center space-x-1 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition disabled:opacity-50 cursor-pointer"
-            title="Synthesize VHDL into Schematic Canvas"
-          >
-            {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-            <span>{isSynthesizing ? 'Synthesizing...' : 'Synthesize'}</span>
-          </button>
+          {onAddToAgentContext && (
+            addedFeedback ? (
+              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-950/90 border border-emerald-500 text-emerald-300 text-xs font-semibold shadow-md animate-pulse">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{addedFeedback}</span>
+              </span>
+            ) : (
+              <button
+                onClick={() => {
+                  let itemLabel = activeFile?.name || 'Code';
+                  if (editorRef.current) {
+                    const selection = editorRef.current.getSelection();
+                    const model = editorRef.current.getModel();
+                    if (selection && !selection.isEmpty() && model) {
+                      const selectedText = model.getValueInRange(selection);
+                      itemLabel = `${activeFile?.name || 'code'}:${selection.startLineNumber}-${selection.endLineNumber}`;
+                      onAddToAgentContext({
+                        type: 'code_range',
+                        label: itemLabel,
+                        data: {
+                          filePath: activeFile?.path,
+                          startLine: selection.startLineNumber,
+                          endLine: selection.endLineNumber,
+                          text: selectedText,
+                        },
+                      });
+                      setAddedFeedback(`Added ${itemLabel}!`);
+                      setTimeout(() => setAddedFeedback(null), 2200);
+                      return;
+                    }
+                  }
+                  if (activeFile) {
+                    onAddToAgentContext({
+                      type: 'file',
+                      label: activeFile.name,
+                      data: { path: activeFile.path, code: activeFile.code.slice(0, 2000) },
+                    });
+                    setAddedFeedback(`Added ${activeFile.name}!`);
+                    setTimeout(() => setAddedFeedback(null), 2200);
+                  }
+                }}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 hover:border-indigo-500 text-indigo-200 hover:text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                title="Attach highlighted code range (or active file) to EDA Copilot context"
+              >
+                <Bot className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">Add to Agent</span>
+              </button>
+            )
+          )}
+
+          {isHdl && (
+            <button
+              onClick={handleSynthesizeClick}
+              disabled={isSynthesizing}
+              className="flex items-center space-x-1 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition disabled:opacity-50 cursor-pointer"
+              title="Synthesize RTL into Schematic Canvas"
+            >
+              {isSynthesizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+              <span>{isSynthesizing ? 'Synthesizing...' : 'Synthesize'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -949,7 +1516,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       <div className="flex-1 flex overflow-hidden">
         {/* Project File Tree Explorer Sidebar */}
         {isSidebarOpen && (
-          <div className="w-60 border-r border-slate-800 bg-slate-900/70 flex flex-col flex-shrink-0 select-none">
+          <>
+            <div
+              style={{ width: `${treeWidth}px` }}
+              className="border-r border-slate-800 bg-slate-900/70 flex flex-col flex-shrink-0 select-none overflow-hidden"
+            >
             {/* Explorer Header */}
             <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
               <div className="flex items-center space-x-2 min-w-0">
@@ -1038,47 +1609,211 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             {/* Bottom Quick Directory Status */}
             <div className="px-3 py-1.5 border-t border-slate-800 bg-slate-950/80 text-[10px] text-slate-500 font-mono flex items-center justify-between">
               <span>{projectTree.length} root items</span>
-              <span className="text-purple-400 font-bold">VHDL-2008</span>
+              <span className="text-purple-400 font-bold">{activeLang.toUpperCase()}</span>
             </div>
           </div>
-        )}
+          {/* Draggable Vertical Splitter Handle */}
+          <div
+            onMouseDown={handleTreeResizeStart}
+            onDoubleClick={() => {
+              setTreeWidth(260);
+              try { localStorage.setItem('circuitforge_editor_tree_width', '260'); } catch {}
+            }}
+            className={`w-1.5 -ml-1 z-20 cursor-col-resize transition-colors select-none group flex items-center justify-center flex-shrink-0 ${
+              isResizingTree ? 'bg-purple-500 shadow-md shadow-purple-500/50' : 'bg-transparent hover:bg-purple-500/60'
+            }`}
+            title="Drag to resize file tree sidebar (double-click to reset)"
+          >
+            <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-purple-300 rounded opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </>
+      )}
 
         {/* Right Editor Area */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1">
-            <Editor
-              height="100%"
-              language={activeFile?.name.endsWith('.json') ? 'json' : 'vhdl'}
-              theme="circuitforge-vhdl-dark"
-              value={activeFile?.code || ''}
-              beforeMount={handleEditorWillMount}
-              onMount={(editor) => {
-                editorRef.current = editor;
-              }}
-              onChange={(val) => handleEditorChange(val || '')}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 13,
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 4,
-                bracketPairColorization: { enabled: true },
-                renderLineHighlight: 'all',
-                fontFamily: "'Fira Code', 'Consolas', 'Courier New', monospace",
-              }}
-            />
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          {/* Floating Markdown Mode Switcher Bar */}
+          {isMarkdown && (
+            <div className="absolute top-3 right-6 z-30 flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-1 shadow-2xl space-x-1">
+              <button
+                onClick={() => setMdViewMode('editor')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer ${
+                  mdViewMode === 'editor'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                title="Monaco Code Editor Only"
+              >
+                <FileCode className="w-3.5 h-3.5" />
+                <span>Editor</span>
+              </button>
+              <button
+                onClick={() => setMdViewMode('preview')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer ${
+                  mdViewMode === 'preview'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                title="Full Markdown Preview"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => setMdViewMode('split')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer ${
+                  mdViewMode === 'split'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                title="Split Editor & Live Preview"
+              >
+                <Columns className="w-3.5 h-3.5" />
+                <span>Split</span>
+              </button>
+            </div>
+          )}
+
+          {/* Main Content Area */}
+          <div className="flex-1 overflow-hidden">
+            {isMarkdown && mdViewMode === 'preview' ? (
+              <div className="w-full h-full overflow-hidden bg-slate-950">
+                <MarkdownDocViewer content={activeFile?.code || ''} />
+              </div>
+            ) : isMarkdown && mdViewMode === 'split' ? (
+              <div className="flex w-full h-full overflow-hidden">
+                <div className="w-1/2 h-full border-r border-slate-800">
+                  <Editor
+                    height="100%"
+                    language={activeLang}
+                    theme="circuitforge-vhdl-dark"
+                    value={activeFile?.code || ''}
+                    beforeMount={handleEditorWillMount}
+                    onMount={(editor) => {
+                      editorRef.current = editor;
+                      if (onAddToAgentContext) {
+                        editor.addAction({
+                          id: 'circuitforge-add-agent-context',
+                          label: '📎 Add to Agent Context (EDA Copilot)',
+                          contextMenuGroupId: 'navigation',
+                          contextMenuOrder: 1.2,
+                          run: (ed: any) => {
+                            const sel = ed.getSelection();
+                            const model = ed.getModel();
+                            if (sel && !sel.isEmpty() && model) {
+                              const txt = model.getValueInRange(sel);
+                              onAddToAgentContext({
+                                type: 'code_range',
+                                label: `${activeFile?.name || 'code'}:${sel.startLineNumber}-${sel.endLineNumber}`,
+                                data: {
+                                  filePath: activeFile?.path,
+                                  startLine: sel.startLineNumber,
+                                  endLine: sel.endLineNumber,
+                                  text: txt,
+                                },
+                              });
+                            } else if (activeFile) {
+                              onAddToAgentContext({
+                                type: 'file',
+                                label: activeFile.name,
+                                data: { path: activeFile.path, code: activeFile.code.slice(0, 2000) },
+                              });
+                            }
+                          },
+                        });
+                      }
+                    }}
+                    onChange={(val) => handleEditorChange(val || '')}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      lineNumbers: 'on',
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      tabSize: 4,
+                      bracketPairColorization: { enabled: true },
+                      renderLineHighlight: 'all',
+                      fontFamily: "'Fira Code', 'Consolas', 'Courier New', monospace",
+                    }}
+                  />
+                </div>
+                <div className="w-1/2 h-full overflow-hidden bg-slate-950">
+                  <MarkdownDocViewer content={activeFile?.code || ''} />
+                </div>
+              </div>
+            ) : (
+              <Editor
+                height="100%"
+                language={activeLang}
+                theme="circuitforge-vhdl-dark"
+                value={activeFile?.code || ''}
+                beforeMount={handleEditorWillMount}
+                onMount={(editor) => {
+                  editorRef.current = editor;
+                  if (onAddToAgentContext) {
+                    editor.addAction({
+                      id: 'circuitforge-add-agent-context',
+                      label: '📎 Add to Agent Context (EDA Copilot)',
+                      contextMenuGroupId: 'navigation',
+                      contextMenuOrder: 1.2,
+                      run: (ed: any) => {
+                        const sel = ed.getSelection();
+                        const model = ed.getModel();
+                        if (sel && !sel.isEmpty() && model) {
+                          const txt = model.getValueInRange(sel);
+                          onAddToAgentContext({
+                            type: 'code_range',
+                            label: `${activeFile?.name || 'code'}:${sel.startLineNumber}-${sel.endLineNumber}`,
+                            data: {
+                              filePath: activeFile?.path,
+                              startLine: sel.startLineNumber,
+                              endLine: sel.endLineNumber,
+                              text: txt,
+                            },
+                          });
+                        } else if (activeFile) {
+                          onAddToAgentContext({
+                            type: 'file',
+                            label: activeFile.name,
+                            data: { path: activeFile.path, code: activeFile.code.slice(0, 2000) },
+                          });
+                        }
+                      },
+                    });
+                  }
+                }}
+                onChange={(val) => handleEditorChange(val || '')}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  tabSize: 4,
+                  bracketPairColorization: { enabled: true },
+                  renderLineHighlight: 'all',
+                  fontFamily: "'Fira Code', 'Consolas', 'Courier New', monospace",
+                }}
+              />
+            )}
           </div>
 
           {/* Lint Diagnostics Drawer */}
-          {lintMessages.length > 0 && (
+          {activeDiagnostics.length > 0 && (
             <div className="h-36 border-t border-slate-800 bg-slate-900/95 overflow-y-auto p-3 font-mono text-xs">
-              <div className="font-bold text-slate-300 mb-1.5 text-[11px] flex items-center space-x-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                <span>Static Analysis & Latch Inference Diagnostics ({lintMessages.length})</span>
+              <div className="font-bold text-slate-300 mb-1.5 text-[11px] flex items-center justify-between">
+                <div className="flex items-center space-x-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isHdl ? 'Static Analysis & DRC Diagnostics' : `${activeLang.toUpperCase()} Syntax & Code Diagnostics`} ({activeDiagnostics.length})</span>
+                </div>
+                <button
+                  onClick={() => setInternalLintMessages([])}
+                  className="text-[10px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+                >
+                  Clear
+                </button>
               </div>
               <div className="space-y-1.5">
-                {lintMessages.map((msg, i) => (
+                {activeDiagnostics.map((msg, i) => (
                   <div
                     key={i}
                     className={`p-2 rounded-lg flex items-start space-x-2 text-[11px] ${
@@ -1107,7 +1842,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Create New File / Folder */}
       {newEntryModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <form
             onSubmit={handleCreateEntrySubmit}
             className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in"
@@ -1135,7 +1870,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
             <div className="space-y-1">
               <label className="text-xs text-slate-400 font-mono">
-                {newEntryModal.isDir ? 'Folder Name:' : 'File Name:'}
+                {newEntryModal.isDir ? 'Folder Name:' : 'File Name (.vhd):'}
               </label>
               <input
                 type="text"
@@ -1176,7 +1911,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Rename Entry */}
       {renameModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <form
             onSubmit={handleRenameSubmit}
             className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in"
@@ -1234,7 +1969,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: Delete Confirmation */}
       {deleteModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 animate-fade-in">
             <div className="flex items-center space-x-2.5 text-rose-400 font-bold text-sm">
               <Trash2 className="w-5 h-5" />
@@ -1266,7 +2001,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Modal: VHDL Toolchain Architecture & Safety Manager */}
       {isToolchainModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-5 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center space-x-2.5">

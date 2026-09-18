@@ -129,7 +129,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
       <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between">

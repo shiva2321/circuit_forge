@@ -1,0 +1,5 @@
+.program stepper
+.wrap_target
+    pull block
+    out pins, 1
+.wrap

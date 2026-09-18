@@ -1,0 +1,10 @@
+{
+  "id": "verilog_uart_subsystem",
+  "name": "Verilog Synthesizable UART Subsystem",
+  "scale": 2,
+  "scale_label": "Scale 2: Verilog RTL Block",
+  "description": "Synthesizable IEEE 1364-2005 Verilog UART transmitter/receiver with SystemVerilog testbench.",
+  "created_at": 1789527387.9837534,
+  "last_modified": 1789527387.9837534,
+  "top_file": "rtl/uart_tx.v"
+}

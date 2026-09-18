@@ -181,4 +181,69 @@ def test_model_driven_kg_retrieval_planning():
     assert "architectural_notes" in plan
 
 
+def test_synthesis_drc_and_multifile_connections():
+    # Structural code with incomplete port map and missing connections
+    code_with_faults = """
+    library IEEE;
+    use IEEE.STD_LOGIC_1164.ALL;
+
+    entity top_adder is
+        port (
+            A, B : in std_logic;
+            Sum, Cout : out std_logic
+        );
+    end top_adder;
+
+    architecture structural of top_adder is
+        signal s1 : std_logic;
+    begin
+        -- HA1 is missing port map for b and cout!
+        HA1: entity work.half_adder
+            port map (a => A, sum => s1);
+
+        -- Multiple driver contention: both assign Sum
+        Sum <= s1;
+        Sum <= A;
+    end structural;
+    """
+    res = client.post("/api/vhdl/synthesize", json={"vhdl_code": code_with_faults, "circuit_name": "top_adder"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "diagnostics" in data
+    diags = data["diagnostics"]
+    assert len(diags) >= 1
+
+    # Check for incomplete port map error (DRC-E103)
+    codes = [d["code"] for d in diags]
+    assert "DRC-E103" in codes or "DRC-E101" in codes or "DRC-E102" in codes
+
+    # Verify hardware consequence is explained
+    for d in diags:
+        assert "hardware_consequence" in d
+        assert len(d["hardware_consequence"]) > 20
+        assert "suggested_fix" in d
+
+    # Verify nodes have source_file annotations
+    for n in data["nodes"]:
+        assert "source_file" in n
+        assert n["source_file"] is not None
+
+def test_agent_auto_repair_and_synthesize():
+    res = client.post("/api/agent/chat", json={
+        "message": "Auto-fix all identified DRC errors, repair floating pins, and synthesize clean design",
+        "circuit_context": {
+            "circuit_name": "full_adder",
+            "vhdl_code": "entity full_adder is port(A, B: in bit; S: out bit); end;",
+            "gate_count": 5,
+            "wire_count": 7
+        }
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert "Autonomous Circuit Repair & Synthesis Complete" in data["reply"]
+    assert "<details" in data["reply"]
+    assert data.get("action", {}).get("type") == "apply_code"
+    assert data.get("action", {}).get("repaired") is True
+    assert len(data.get("action", {}).get("vhdl_code", "")) > 50
 

@@ -6,6 +6,20 @@ export interface PortDef {
   type_name?: string;
 }
 
+export interface SynthesisDiagnostic {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  hardware_consequence: string;
+  target_node?: string;
+  target_port?: string;
+  target_signal?: string;
+  source_file?: string;
+  line?: number;
+  suggested_fix?: string;
+}
+
 export interface NetlistNode {
   id: string;
   label: string;
@@ -20,6 +34,11 @@ export interface NetlistNode {
   properties?: Record<string, any>;
   has_subgraph?: boolean;
   subgraph_ref?: string | null;
+  source_file?: string;
+  source_module?: string;
+  color_group?: string;
+  parent_instance?: string;
+  diagnostics?: SynthesisDiagnostic[];
 }
 
 export interface NetlistWire {
@@ -31,6 +50,12 @@ export interface NetlistWire {
   width: number;
   label?: string | null;
   points?: [number, number][];
+  is_inherited?: boolean;
+  parent_port?: string;
+  child_port?: string;
+  source_file?: string;
+  has_conflict?: boolean;
+  conflict_reason?: string;
 }
 
 export interface NetlistGraph {
@@ -42,6 +67,7 @@ export interface NetlistGraph {
   nodes: NetlistNode[];
   wires: NetlistWire[];
   metadata?: Record<string, any>;
+  diagnostics?: SynthesisDiagnostic[];
 }
 
 export interface WaveformTransition {
@@ -92,6 +118,7 @@ export interface AgentLog {
   thought: string;
   action?: string | null;
   details?: Record<string, any>;
+  category?: 'engineering' | 'system' | 'user' | 'tool';
 }
 
 export interface KGNode {

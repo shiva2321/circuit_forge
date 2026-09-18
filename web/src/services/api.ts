@@ -153,6 +153,37 @@ export async function sendAgentIntervention(
   return res.json();
 }
 
+export async function autoFixDrc(
+  projectId?: string,
+  targetFile?: string,
+  vhdlCode?: string,
+  circuitName?: string,
+  issues?: any[]
+): Promise<{
+  success: boolean;
+  circuit_name: string;
+  vhdl_code: string;
+  repaired_code?: string;
+  repaired_issues_count?: number;
+  netlist: any;
+  repairs_applied: string[];
+  drc_status: string;
+  active_faults_cleared: boolean;
+}> {
+  const res = await fetch(`${API_BASE}/agent/auto-fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: projectId,
+      target_file: targetFile,
+      vhdl_code: vhdlCode,
+      circuit_name: circuitName,
+      issues,
+    }),
+  });
+  return res.json();
+}
+
 export async function chatWithAgent(
   message: string,
   circuitContext?: {
@@ -162,14 +193,28 @@ export async function chatWithAgent(
     wire_count?: number;
     probes?: Record<string, string>;
     faults?: Record<string, string>;
+    netlist?: any;
+    active_file?: string;
+    active_tab?: string;
+    active_tab_label?: string;
+    canvas_live_summary?: string;
+    drc_issues?: any[];
+    simulation_summary?: any;
+    active_selection?: any;
+    project_files?: string[];
+    attached_chips?: any[];
+    [key: string]: any;
   },
   openrouterKey?: string,
-  model?: string
+  model?: string,
+  projectId?: string,
+  chatHistory?: any[]
 ): Promise<{
   success: boolean;
   model: string;
   reply: string;
-  action?: { type: string; goal?: string };
+  action?: { type: string; goal?: string; vhdl_code?: string; circuit_name?: string; [key: string]: any };
+  tool_history?: Array<{ tool: string; arguments?: any; result?: any }>;
   is_llm?: boolean;
 }> {
   const res = await fetch(`${API_BASE}/agent/chat`, {
@@ -180,7 +225,44 @@ export async function chatWithAgent(
       circuit_context: circuitContext,
       openrouter_key: openrouterKey,
       model,
+      project_id: projectId,
+      chat_history: chatHistory,
     }),
+  });
+  return res.json();
+}
+
+export async function getAgentTools(): Promise<{ tools: any[] }> {
+  const res = await fetch(`${API_BASE}/agent/tools`);
+  return res.json();
+}
+
+export async function executeAgentTool(
+  toolName: string,
+  args: Record<string, any> = {},
+  projectId?: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/agent/tools/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_name: toolName, arguments: args, project_id: projectId }),
+  });
+  return res.json();
+}
+
+export async function benchmarkCircuit(
+  circuitName: string,
+  durationNs: number = 100,
+  vhdlCode?: string
+): Promise<{
+  success: boolean;
+  circuit_name: string;
+  benchmark_results: any;
+}> {
+  const res = await fetch(`${API_BASE}/agent/benchmark`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ circuit_name: circuitName, duration_ns: durationNs, vhdl_code: vhdlCode }),
   });
   return res.json();
 }
@@ -288,6 +370,11 @@ export async function listProjects(): Promise<ProjectMeta[]> {
   return res.json();
 }
 
+export async function getProject(projectId: string): Promise<ProjectMeta> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}`);
+  return res.json();
+}
+
 export async function createProject(data: {
   name: string;
   scale?: number;
@@ -347,3 +434,169 @@ export async function renameProjectEntry(projectId: string, oldPath: string, new
   });
   return res.json();
 }
+
+// Turnkey Hardware Lifecycle APIs
+export async function runMultiphysicsSimulation(params: {
+  circuit_name?: string;
+  clock_mhz?: number;
+  trace_length_mm?: number;
+  supply_voltage?: number;
+  load_current_a?: number;
+  ambient_temp_c?: number;
+  airflow_mps?: number;
+  board_thickness_mm?: number;
+  drop_height_m?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/multiphysics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runDfmStackupAudit(params: {
+  circuit_name?: string;
+  layer_count?: number;
+  substrate_family?: string;
+  trace_width_mil?: number;
+  trace_spacing_mil?: number;
+  min_via_drill_mil?: number;
+  use_nitrogen_purge?: boolean;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/dfm-stackup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runQaInspection(params: {
+  circuit_name?: string;
+  bga_package?: string;
+  ball_count?: number;
+  pitch_mm?: number;
+  total_nets?: number;
+  fundamental_clock_mhz?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/qa-inspection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runFirmwareSecurity(params: {
+  circuit_name?: string;
+  base_address_hex?: string;
+  device_serial_id?: string;
+  test_cycles?: number;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/firmware-security`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function runSupplyChainLifecycle(params: {
+  circuit_name?: string;
+  target_volume?: number;
+  action?: string;
+  original_mpn?: string;
+  substitute_mpn?: string;
+} = {}): Promise<any> {
+  const res = await fetch(`${API_BASE}/lifecycle/supply-chain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+// Multi-Platform Hardware & Embedded Systems APIs
+export async function getPlatformsCatalog(): Promise<{
+  total_platforms: number;
+  platforms: any[];
+  supported_languages: any[];
+}> {
+  const res = await fetch(`${API_BASE}/platforms/catalog`);
+  return res.json();
+}
+
+export async function generatePlatformCode(params: {
+  platform_id: string;
+  target_language: string;
+  project_name?: string;
+  peripherals?: string[];
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/platforms/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function scaffoldPlatformProject(params: {
+  platform_id: string;
+  target_language: string;
+  project_name: string;
+  description?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/platforms/scaffold-project`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+// Multi-Language Code Validation & Syntax Linting
+export async function validateCode(params: {
+  code: string;
+  language?: string;
+  file_path?: string;
+}): Promise<{
+  success: boolean;
+  language: string;
+  is_valid: boolean;
+  error_count: number;
+  warning_count: number;
+  messages: Array<{ line: number; severity: string; message: string; rule_id: string }>;
+}> {
+  const res = await fetch(`${API_BASE}/code/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+// Lifecycle Artifact Workspace Export
+export async function exportLifecycleArtifact(params: {
+  project_id: string;
+  artifact_type: string;
+  circuit_name?: string;
+  payload?: any;
+}): Promise<{
+  success: boolean;
+  project_id: string;
+  artifact_type: string;
+  circuit_name: string;
+  exported_files: Record<string, any>;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/lifecycle/export-artifact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+
+

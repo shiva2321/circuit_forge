@@ -1,0 +1,10 @@
+[Unit]
+Description=Raspberry Pi 5 Hardware Edge Gateway
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/edge_controller.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

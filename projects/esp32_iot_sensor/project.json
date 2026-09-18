@@ -1,0 +1,10 @@
+{
+  "id": "esp32_iot_sensor",
+  "name": "ESP32-S3 IoT Wireless Station",
+  "scale": 3,
+  "scale_label": "Scale 3: ESP32-S3 Dual-Core",
+  "description": "ESP32-S3 dual-core Wi-Fi/BLE station with ESP-IDF C driver, MicroPython script, and PlatformIO configuration.",
+  "created_at": 1789527387.9797378,
+  "last_modified": 1789527387.9797378,
+  "top_file": "main/app_main.c"
+}

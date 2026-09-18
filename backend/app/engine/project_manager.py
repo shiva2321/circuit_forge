@@ -226,6 +226,128 @@ class ProjectManager:
                         "end Behavioral;\n"
                     )
                 }
+            },
+            {
+                "id": "esp32_iot_sensor",
+                "name": "ESP32-S3 IoT Wireless Station",
+                "scale": 3,
+                "scale_label": "Scale 3: ESP32-S3 Dual-Core",
+                "description": "ESP32-S3 dual-core Wi-Fi/BLE station with ESP-IDF C driver, MicroPython script, and PlatformIO configuration.",
+                "files": {
+                    "main/app_main.c": (
+                        "#include <stdio.h>\n#include \"freertos/FreeRTOS.h\"\n#include \"freertos/task.h\"\n#include \"driver/gpio.h\"\n#include \"esp_log.h\"\n\n"
+                        "void app_main(void) {\n"
+                        "    ESP_LOGI(\"ESP32S3\", \"ESP32-S3 Dual-Core Xtensa LX7 Edge System Running!\");\n"
+                        "    gpio_set_direction(GPIO_NUM_8, GPIO_MODE_OUTPUT);\n"
+                        "    while(1) {\n"
+                        "        gpio_set_level(GPIO_NUM_8, 1);\n"
+                        "        vTaskDelay(pdMS_TO_TICKS(500));\n"
+                        "        gpio_set_level(GPIO_NUM_8, 0);\n"
+                        "        vTaskDelay(pdMS_TO_TICKS(500));\n"
+                        "    }\n"
+                        "}\n"
+                    ),
+                    "main.py": (
+                        "import time\nfrom machine import Pin, I2C\n"
+                        "print(\"ESP32-S3 MicroPython Sensor Node\")\n"
+                        "led = Pin(8, Pin.OUT)\n"
+                        "while True:\n"
+                        "    led.value(not led.value())\n"
+                        "    time.sleep_ms(500)\n"
+                    ),
+                    "platformio.ini": (
+                        "[env:esp32s3]\nplatform = espressif32\nboard = esp32-s3-devkitc-1\nframework = espidf\nmonitor_speed = 115200\n"
+                    )
+                }
+            },
+            {
+                "id": "rpi_pico_motion",
+                "name": "Raspberry Pi Pico RP2040 Controller",
+                "scale": 3,
+                "scale_label": "Scale 3: RP2040 Dual-Core",
+                "description": "RP2040 dual-core ARM Cortex-M0+ with custom hardware PIO state machine and Pico SDK C driver.",
+                "files": {
+                    "main.c": (
+                        "#include <stdio.h>\n#include \"pico/stdlib.h\"\n#include \"pico/multicore.h\"\n\n"
+                        "void core1_entry() {\n"
+                        "    while(1) { tight_loop_contents(); }\n"
+                        "}\n\n"
+                        "int main() {\n"
+                        "    stdio_init_all();\n"
+                        "    multicore_launch_core1(core1_entry);\n"
+                        "    gpio_init(25);\n"
+                        "    gpio_set_dir(25, GPIO_OUT);\n"
+                        "    while(1) {\n"
+                        "        gpio_put(25, 1); sleep_ms(250);\n"
+                        "        gpio_put(25, 0); sleep_ms(250);\n"
+                        "    }\n"
+                        "}\n"
+                    ),
+                    "stepper.pio": (
+                        ".program stepper\n.wrap_target\n    pull block\n    out pins, 1\n.wrap\n"
+                    ),
+                    "CMakeLists.txt": (
+                        "cmake_minimum_required(VERSION 3.13)\ninclude(pico_sdk_import.cmake)\nproject(rpi_pico_motion C CXX ASM)\npico_sdk_init()\nadd_executable(rpi_pico_motion main.c)\ntarget_link_libraries(rpi_pico_motion pico_stdlib pico_multicore)\npico_add_extra_outputs(rpi_pico_motion)\n"
+                    )
+                }
+            },
+            {
+                "id": "rpi5_linux_gateway",
+                "name": "Raspberry Pi 5 Linux Edge Gateway",
+                "scale": 4,
+                "scale_label": "Scale 4: Linux SBC (BCM2712)",
+                "description": "Industrial edge controller running Linux on Broadcom BCM2712 Quad Cortex-A76 with gpiozero, systemd service, and 40-pin header mapping.",
+                "files": {
+                    "edge_controller.py": (
+                        "#!/usr/bin/env python3\nimport time\nfrom gpiozero import LED, Button\n"
+                        "led = LED(17)\n"
+                        "print(\"Raspberry Pi 5 Edge Gateway Active!\")\n"
+                        "while True:\n"
+                        "    led.toggle()\n"
+                        "    time.sleep(1.0)\n"
+                    ),
+                    "pinout_map.txt": (
+                        "Raspberry Pi 5 40-Pin Header Configuration:\nPin 1: 3V3 Power\nPin 6: GND\nPin 11: GPIO 17 -> LED\nPin 3/5: GPIO 2/3 -> I2C1\n"
+                    ),
+                    "edge_controller.service": (
+                        "[Unit]\nDescription=Raspberry Pi 5 Hardware Edge Gateway\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/python3 /opt/edge_controller.py\nRestart=always\n\n[Install]\nWantedBy=multi-user.target\n"
+                    )
+                }
+            },
+            {
+                "id": "verilog_uart_subsystem",
+                "name": "Verilog Synthesizable UART Subsystem",
+                "scale": 2,
+                "scale_label": "Scale 2: Verilog RTL Block",
+                "description": "Synthesizable IEEE 1364-2005 Verilog UART transmitter/receiver with SystemVerilog testbench.",
+                "files": {
+                    "rtl/uart_tx.v": (
+                        "`timescale 1ns / 1ps\n"
+                        "module uart_tx #(\n"
+                        "    parameter CLK_FREQ = 100_000_000,\n"
+                        "    parameter BAUD = 115200\n"
+                        ")(\n"
+                        "    input wire clk, input wire rst_n,\n"
+                        "    input wire [7:0] data_in, input wire start,\n"
+                        "    output reg tx, output reg busy\n"
+                        ");\n"
+                        "    always @(posedge clk or negedge rst_n) begin\n"
+                        "        if (!rst_n) begin tx <= 1'b1; busy <= 1'b0; end\n"
+                        "        else if (start && !busy) begin busy <= 1'b1; tx <= 1'b0; end\n"
+                        "    end\n"
+                        "endmodule\n"
+                    ),
+                    "tb/uart_tx_tb.sv": (
+                        "`timescale 1ns / 1ps\n"
+                        "module uart_tx_tb;\n"
+                        "    reg clk = 0; reg rst_n = 0; reg start = 0;\n"
+                        "    reg [7:0] data = 8'h55; wire tx; wire busy;\n"
+                        "    always #5 clk = ~clk;\n"
+                        "    uart_tx uut (.clk(clk), .rst_n(rst_n), .data_in(data), .start(start), .tx(tx), .busy(busy));\n"
+                        "    initial begin #20 rst_n = 1; #20 start = 1; #10 start = 0; #200 $finish; end\n"
+                        "endmodule\n"
+                    )
+                }
             }
         ]
 
@@ -287,6 +409,84 @@ class ProjectManager:
 
         projects.sort(key=lambda p: p.get("last_modified", 0), reverse=True)
         return projects
+
+    def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves metadata for a specific project by id."""
+        if not project_id:
+            return None
+        proj_dir = os.path.join(self.base_dir, project_id)
+        if not os.path.exists(proj_dir):
+            return None
+        meta_path = os.path.join(proj_dir, "project.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    meta["path"] = proj_dir
+                    file_count = sum(len(files) for _, _, files in os.walk(proj_dir) if not any(p.startswith('.') for p in files))
+                    meta["file_count"] = file_count
+                    return meta
+            except Exception:
+                pass
+        top_f = self.get_top_file(project_id)
+        return {
+            "id": project_id,
+            "name": project_id.replace("_", " ").title(),
+            "scale": 1,
+            "scale_label": "Custom Project",
+            "description": "User created workspace project",
+            "path": proj_dir,
+            "file_count": 1,
+            "top_file": top_f,
+            "last_modified": os.path.getmtime(proj_dir) if os.path.exists(proj_dir) else time.time()
+        }
+
+    def get_top_file(self, project_id: str) -> Optional[str]:
+        """Returns the relative path to the primary top-level design source file for a project."""
+        if not project_id:
+            return None
+        proj_dir = os.path.join(self.base_dir, project_id)
+        if not os.path.exists(proj_dir):
+            return None
+        meta_path = os.path.join(proj_dir, "project.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    if meta.get("top_file"):
+                        return meta["top_file"]
+            except Exception:
+                pass
+
+        # Search src/ directory for .vhd, .vhdl, .v, .sv files
+        src_dir = os.path.join(proj_dir, "src")
+        if os.path.exists(src_dir):
+            candidates = []
+            for f in sorted(os.listdir(src_dir)):
+                fl = f.lower()
+                if fl.endswith((".vhd", ".vhdl", ".v", ".sv")) and "tb" not in fl:
+                    candidates.append(f"src/{f}")
+            if candidates:
+                # Prefer one matching the project_id name
+                for c in candidates:
+                    if project_id.lower() in c.lower():
+                        return c
+                return candidates[0]
+
+        # Search main/ directory (for embedded platforms)
+        main_dir = os.path.join(proj_dir, "main")
+        if os.path.exists(main_dir):
+            for f in sorted(os.listdir(main_dir)):
+                fl = f.lower()
+                if fl.endswith((".c", ".cpp", ".py", ".rs")):
+                    return f"main/{f}"
+
+        # Root directory fallback
+        for f in sorted(os.listdir(proj_dir)):
+            fl = f.lower()
+            if fl.endswith((".vhd", ".vhdl", ".v", ".sv", ".c", ".py")) and not fl.startswith("."):
+                return f
+        return "src/full_adder.vhd"
 
     def create_project(self, name: str, scale: int = 1, template_type: str = "rtl", description: str = "") -> Dict[str, Any]:
         proj_id = name.lower().replace(" ", "_").replace("-", "_")
@@ -473,5 +673,62 @@ class ProjectManager:
         os.makedirs(os.path.dirname(new_path), exist_ok=True)
         os.rename(old_path, new_path)
         return True
+
+    def create_embedded_platform_project(
+        self,
+        platform_id: str,
+        target_language: str,
+        project_name: str,
+        description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        from backend.app.engine.embedded_platforms import embedded_platforms_engine
+        gen = embedded_platforms_engine.generate_platform_firmware_and_config(
+            platform_id=platform_id,
+            target_language=target_language,
+            project_name=project_name
+        )
+        proj_id = project_name.lower().replace(" ", "_").replace("-", "_")
+        proj_dir = os.path.join(self.base_dir, proj_id)
+        os.makedirs(proj_dir, exist_ok=True)
+
+        top_file = ""
+        # Write source files
+        for rel_path, content in gen["source_files"].items():
+            if not top_file:
+                top_file = rel_path
+            full_path = os.path.join(proj_dir, rel_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        # Write manifest files
+        for rel_path, content in gen["manifest_files"].items():
+            full_path = os.path.join(proj_dir, rel_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        # Save project metadata
+        meta = {
+            "id": proj_id,
+            "name": gen["project_name"],
+            "platform_id": gen["platform_id"],
+            "platform_name": gen["platform_name"],
+            "soc": gen["soc"],
+            "architecture": gen["architecture"],
+            "target_language": gen["target_language"],
+            "scale": 3,
+            "scale_label": f"Scale 3: {gen['platform_name']}",
+            "description": description or f"{gen['platform_name']} ({gen['architecture']}) embedded system project",
+            "created_at": time.time(),
+            "last_modified": time.time(),
+            "top_file": top_file
+        }
+        with open(os.path.join(proj_dir, "project.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+
+        meta["path"] = proj_dir
+        meta["file_count"] = len(gen["source_files"]) + len(gen["manifest_files"])
+        return meta
 
 project_mgr = ProjectManager()

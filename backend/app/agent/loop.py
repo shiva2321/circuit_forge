@@ -11,7 +11,15 @@ from typing import Dict, List, Any, Optional
 from enum import Enum
 from backend.app.agent.tools import CircuitTools
 from backend.app.agent.openrouter import openrouter_client
-from backend.app.agent.hardware_generator import detect_design_scale, generate_64bit_microprocessor_suite, materialize_design_into_project
+from backend.app.agent.hardware_generator import (
+    detect_design_scale,
+    clean_hardware_name,
+    generate_32_neuron_suite,
+    generate_dsp_mac_suite,
+    generate_64bit_microprocessor_suite,
+    materialize_design_into_project
+)
+from backend.app.engine.project_manager import project_mgr
 
 class AgentState(Enum):
     IDLE = "IDLE"
@@ -33,13 +41,25 @@ class CircuitAgent:
         self.current_scale: int = 1
         self.current_circuit_name: str = ""
         self.logs: List[Dict[str, Any]] = []
+        self.current_phase: Optional[Dict[str, Any]] = None
         self.is_paused: bool = False
         self.step_mode: bool = False
         self._step_trigger = asyncio.Event()
 
+    async def set_step_progress(self, step: int, step_index: int, step_name: str, state: str, thought: str):
+        self.current_phase = {
+            "step": step,
+            "step_index": step_index,
+            "total_steps": 6,
+            "step_name": step_name,
+            "state": state,
+            "thought": thought
+        }
+        await self.broadcast_event("agent_step_progress", self.current_phase)
+
     def log_thought(self, thought: str, action: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
         entry = {
-            "time": time.time(),
+            "time": int(time.time() * 1000),
             "state": self.state.value,
             "thought": thought,
             "action": action,
@@ -116,9 +136,11 @@ class CircuitAgent:
         project_id: Optional[str] = None,
     ):
         """Autonomous end-to-end design, lint, synthesis, simulation, and learning pipeline with live progress."""
+        clean_name = clean_hardware_name(circuit_name, default="dsp_mac_pipeline" if scale == 3 else "processor_top" if scale >= 4 else "custom_circuit")
         self.current_goal = goal
         self.current_scale = scale
-        self.current_circuit_name = circuit_name
+        self.current_circuit_name = clean_name
+        circuit_name = clean_name
         self.is_paused = False
         self.step_mode = False
 
@@ -128,14 +150,13 @@ class CircuitAgent:
             active_key = openrouter_client.resolve_key(openrouter_key)
             target_model = (model or openrouter_client.default_model or "anthropic/claude-3.7-sonnet").strip()
 
-            await self.broadcast_event("agent_step_progress", {
-                "step": 1,
-                "step_index": 0,
-                "total_steps": 6,
-                "step_name": "Knowledge Retrieval",
-                "state": "PLANNING",
-                "thought": f"Reasoning over objective '{goal}' to formulate Knowledge Graph retrieval strategy."
-            })
+            await self.set_step_progress(
+                step=1,
+                step_index=0,
+                step_name="Knowledge Retrieval",
+                state="PLANNING",
+                thought=f"Reasoning over objective '{goal}' to formulate Knowledge Graph retrieval strategy."
+            )
             self.log_thought(
                 f"Analyzing circuit objective: '{goal}' at Scale {scale}. Formulating knowledge queries...",
                 action="query_knowledge_graph"
@@ -143,13 +164,24 @@ class CircuitAgent:
             await self._check_pause_and_step()
 
             # Let AI Model (or expert heuristic) formulate targeted graph queries and hazard protections
-            retrieval_plan = await openrouter_client.plan_knowledge_retrieval(
-                goal=goal,
-                scale=scale,
-                circuit_name=circuit_name,
-                api_key=active_key,
-                model=target_model
-            )
+            try:
+                retrieval_plan = await asyncio.wait_for(
+                    openrouter_client.plan_knowledge_retrieval(
+                        goal=goal,
+                        scale=scale,
+                        circuit_name=circuit_name,
+                        api_key=active_key,
+                        model=target_model
+                    ),
+                    timeout=15.0
+                )
+            except Exception:
+                retrieval_plan = {
+                    "queries": [circuit_name, goal],
+                    "architectural_notes": f"Scale {scale} digital architecture for {circuit_name}.",
+                    "hazards_to_prevent": ["Unintentional transparent latch inference in combinational processes"],
+                    "source": "Expert EDA Heuristic Engine"
+                }
             queries = retrieval_plan.get("queries", [circuit_name, goal])
             arch_notes = retrieval_plan.get("architectural_notes", "")
             hazards = retrieval_plan.get("hazards_to_prevent", [])
@@ -186,14 +218,13 @@ class CircuitAgent:
 
             # 2. DESIGNING & CODE GENERATION (Step 2/6)
             self.state = AgentState.DESIGNING
-            await self.broadcast_event("agent_step_progress", {
-                "step": 2,
-                "step_index": 1,
-                "total_steps": 6,
-                "step_name": "Architecture & Planning",
-                "state": "DESIGNING",
-                "thought": f"Synthesizing VHDL-2008 architecture and entity ports for {circuit_name} grounded in retrieved rules."
-            })
+            await self.set_step_progress(
+                step=2,
+                step_index=1,
+                step_name="Architecture & Planning",
+                state="DESIGNING",
+                thought=f"Synthesizing VHDL-2008 architecture and entity ports for {circuit_name} grounded in retrieved rules."
+            )
 
             if active_key and len(active_key.strip()) > 10:
                 self.log_thought(
@@ -201,13 +232,16 @@ class CircuitAgent:
                     action="llm_generate"
                 )
                 try:
-                    llm_res = await openrouter_client.generate_circuit_design(
-                        goal=goal,
-                        scale=scale,
-                        circuit_name=circuit_name,
-                        api_key=active_key,
-                        model=target_model,
-                        kg_context=kg_results
+                    llm_res = await asyncio.wait_for(
+                        openrouter_client.generate_circuit_design(
+                            goal=goal,
+                            scale=scale,
+                            circuit_name=circuit_name,
+                            api_key=active_key,
+                            model=target_model,
+                            kg_context=kg_results
+                        ),
+                        timeout=22.0
                     )
                     vhdl_code = llm_res["vhdl_code"]
                     design_res = {
@@ -222,6 +256,12 @@ class CircuitAgent:
                         action="llm_complete",
                         details={"preview": vhdl_code[:220]}
                     )
+                except asyncio.TimeoutError:
+                    self.log_thought(
+                        f"OpenRouter model '{target_model}' timed out after 22s (busy queue). Fast-switching to deterministic expert engine.",
+                        action="llm_timeout_fallback"
+                    )
+                    design_res = self.tools.design_circuit(circuit_name, scale, goal)
                 except Exception as llm_err:
                     self.log_thought(
                         f"OpenRouter call failed ({str(llm_err)}). Using deterministic expert engine.",
@@ -244,18 +284,74 @@ class CircuitAgent:
             )
 
             # ── Hardware File Materialization ─────────────────────────────────────────
-            # For large-scale (processor/subsystem) goals, write full multi-file
-            # VHDL project suite to disk and notify the Studio to reload.
+            # Write full synthesizable VHDL project suite or RTL design to the active project workspace
             effective_scale = detect_design_scale(goal) if scale <= 1 else scale
-            if effective_scale >= 3 and project_id:
+            if project_id:
                 try:
-                    self.log_thought(
-                        f"Scale {effective_scale} design detected — generating multi-file VHDL suite for '{circuit_name}'…",
-                        action="materialize_start"
-                    )
-                    suite = generate_64bit_microprocessor_suite(circuit_name)
-                    mat_result = materialize_design_into_project(project_id, suite)
-                    file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    if any(k in goal.lower() for k in ("neuron", "neural", "synapse", "brain", "ann", "display")):
+                        self.log_thought(
+                            f"Scale {effective_scale} Neural Array & 4-Digit Display detected — generating 32-neuron hardware suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_32_neuron_suite(circuit_name)
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    elif effective_scale == 3 or any(k in goal.lower() for k in ("dsp", "mac", "multiply", "accumulat", "accelerator")):
+                        self.log_thought(
+                            f"Scale 3 DSP subsystem detected — generating pipelined MAC hardware suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_dsp_mac_suite(circuit_name)
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    elif effective_scale >= 4 or any(k in goal.lower() for k in ("riscv", "cpu", "processor", "core", "rv32")):
+                        self.log_thought(
+                            f"Scale {effective_scale} processor core detected — generating multi-file processor suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_64bit_microprocessor_suite(circuit_name)
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    else:
+                        # Scale 1 or Scale 2 RTL / Gate-level design: write primary RTL, TB, and spec into active project
+                        top_rel = f"src/{circuit_name}.vhd"
+                        project_mgr.write_file(project_id, top_rel, design_res["vhdl_code"])
+                        file_list = [top_rel]
+
+                        tb_code = (
+                            "library IEEE;\nuse IEEE.STD_LOGIC_1164.ALL;\n\n"
+                            f"entity {circuit_name}_tb is\nend {circuit_name}_tb;\n\n"
+                            f"architecture sim of {circuit_name}_tb is\n"
+                            "    signal clk : STD_LOGIC := '0';\n"
+                            "    signal rst : STD_LOGIC := '1';\n"
+                            "begin\n"
+                            "    clk <= not clk after 5 ns;\n"
+                            f"    uut: entity work.{circuit_name} port map (clk => clk, rst => rst);\n"
+                            "    process begin\n"
+                            "        rst <= '1'; wait for 20 ns;\n"
+                            "        rst <= '0'; wait for 100 ns;\n"
+                            "        wait;\n"
+                            "    end process;\n"
+                            "end sim;\n"
+                        )
+                        tb_rel = f"tb/{circuit_name}_tb.vhd"
+                        project_mgr.write_file(project_id, tb_rel, tb_code)
+                        file_list.append(tb_rel)
+
+                        spec_code = (
+                            f"# Architecture Specification: {circuit_name}\n\n"
+                            f"- **Goal**: {goal}\n"
+                            f"- **Scale**: {effective_scale}\n"
+                            f"- **Primary RTL**: `{top_rel}`\n"
+                            f"- **Testbench**: `{tb_rel}`\n"
+                            f"- **Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        )
+                        spec_rel = f"docs/{circuit_name}_spec.md"
+                        project_mgr.write_file(project_id, spec_rel, spec_code)
+                        file_list.append(spec_rel)
+
+                        mat_result = {"top_file": top_rel, "modules": [circuit_name]}
+
                     self.log_thought(
                         f"Materialized {len(file_list)} files into project '{project_id}': {', '.join(file_list[:4])}{'…' if len(file_list) > 4 else ''}",
                         action="materialize_complete",
@@ -264,8 +360,8 @@ class CircuitAgent:
                     await self.broadcast_event("project_files_updated", {
                         "project_id": project_id,
                         "files": file_list,
-                        "top_file": mat_result.get("top_file", ""),
-                        "modules": mat_result.get("modules", []),
+                        "top_file": mat_result.get("top_file", f"src/{circuit_name}.vhd"),
+                        "modules": mat_result.get("modules", [circuit_name]),
                         "circuit_name": circuit_name,
                         "scale": effective_scale,
                     })
@@ -281,14 +377,13 @@ class CircuitAgent:
 
             # 3. LINTING & SYNTAX VALIDATION (Step 3/6)
             self.state = AgentState.LINTING
-            await self.broadcast_event("agent_step_progress", {
-                "step": 3,
-                "step_index": 2,
-                "total_steps": 6,
-                "step_name": "Static DRC Checks",
-                "state": "LINTING",
-                "thought": "Analyzing syntax and verifying latch inference rules."
-            })
+            await self.set_step_progress(
+                step=3,
+                step_index=2,
+                step_name="Static DRC Checks",
+                state="LINTING",
+                thought="Analyzing syntax and verifying latch inference rules."
+            )
             self.log_thought("Running syntax check and latch inference validation.", action="lint_circuit")
             await self._check_pause_and_step()
 
@@ -307,22 +402,24 @@ class CircuitAgent:
                     action="agent_self_repair_start",
                     details={"errors": err_msgs}
                 )
-                await self.broadcast_event("agent_step_progress", {
-                    "step": 3,
-                    "step_index": 2,
-                    "total_steps": 6,
-                    "step_name": "Autonomous Self-Repair",
-                    "state": "LINTING",
-                    "thought": f"Correcting {len(err_msgs)} VHDL syntax & DRC rule violations via self-healing loop."
-                })
+                await self.set_step_progress(
+                    step=3,
+                    step_index=2,
+                    step_name="Autonomous Self-Repair",
+                    state="LINTING",
+                    thought=f"Correcting {len(err_msgs)} VHDL syntax & DRC rule violations via self-healing loop."
+                )
                 try:
-                    repair_res = await openrouter_client.repair_circuit_design(
-                        vhdl_code=design_res["vhdl_code"],
-                        errors=err_msgs,
-                        goal=goal,
-                        circuit_name=circuit_name,
-                        api_key=active_key,
-                        model=target_model if active_key else None
+                    repair_res = await asyncio.wait_for(
+                        openrouter_client.repair_circuit_design(
+                            vhdl_code=design_res["vhdl_code"],
+                            errors=err_msgs,
+                            goal=goal,
+                            circuit_name=circuit_name,
+                            api_key=active_key,
+                            model=target_model if active_key else None
+                        ),
+                        timeout=20.0
                     )
                     repaired_vhdl = repair_res.get("vhdl_code", "")
                     if repaired_vhdl:
@@ -347,14 +444,13 @@ class CircuitAgent:
 
             # 4. SYNTHESIS & NETLIST ELABORATION (Step 4/6)
             self.state = AgentState.SYNTHESIZING
-            await self.broadcast_event("agent_step_progress", {
-                "step": 4,
-                "step_index": 3,
-                "total_steps": 6,
-                "step_name": "Netlist Synthesis",
-                "state": "SYNTHESIZING",
-                "thought": "Elaborating gate-level netlist and routing interconnects."
-            })
+            await self.set_step_progress(
+                step=4,
+                step_index=3,
+                step_name="Netlist Synthesis",
+                state="SYNTHESIZING",
+                thought="Elaborating gate-level netlist and routing interconnects."
+            )
             self.log_thought("Elaborating hierarchical netlist graph for visual schematic inspection.", action="synthesize_netlist")
             await self._check_pause_and_step()
 
@@ -375,14 +471,13 @@ class CircuitAgent:
 
             # 5. CYCLE-ACCURATE SIMULATION (Step 5/6)
             self.state = AgentState.SIMULATING
-            await self.broadcast_event("agent_step_progress", {
-                "step": 5,
-                "step_index": 4,
-                "total_steps": 6,
-                "step_name": "Simulation & Waveforms",
-                "state": "SIMULATING",
-                "thought": "Executing cycle-accurate simulation and evaluating assertion checks."
-            })
+            await self.set_step_progress(
+                step=5,
+                step_index=4,
+                step_name="Simulation & Waveforms",
+                state="SIMULATING",
+                thought="Executing cycle-accurate simulation and evaluating assertion checks."
+            )
             self.log_thought("Executing event-driven cycle simulation and evaluating assertion checks.", action="run_simulation")
             await self._check_pause_and_step()
 
@@ -394,19 +489,31 @@ class CircuitAgent:
                 action="simulation_complete",
                 details=assertions
             )
+
+            # Architectural Benchmarking Assessment
+            try:
+                bench = self.tools.eda_benchmark_circuit(circuit_name, duration_ns=100, vhdl_code=design_res.get("vhdl_code"))
+                b_res = bench.get("benchmark_results", {})
+                self.log_thought(
+                    f"Architectural Benchmark ({b_res.get('verdict', 'VERIFIED')}): Score {b_res.get('architectural_score')}/100. Fmax={b_res.get('max_clock_frequency_mhz')}MHz, Throughput={b_res.get('simulation_throughput_m_evals_sec')}M-evals/s.",
+                    action="benchmark_complete",
+                    details=b_res
+                )
+            except Exception:
+                pass
+
             await asyncio.sleep(0.5)
             await self._check_pause_and_step()
 
             # 6. AUTONOMOUS LEARNING & GRAPH EVOLUTION (Step 6/6)
             self.state = AgentState.LEARNING
-            await self.broadcast_event("agent_step_progress", {
-                "step": 6,
-                "step_index": 5,
-                "total_steps": 6,
-                "step_name": "Memory Augmentation",
-                "state": "LEARNING",
-                "thought": "Persisting verified design node and empirical insights into Knowledge Graph."
-            })
+            await self.set_step_progress(
+                step=6,
+                step_index=5,
+                step_name="Memory Augmentation",
+                state="LEARNING",
+                thought="Persisting verified design node and empirical insights into Knowledge Graph."
+            )
             self.log_thought("Reflecting on circuit performance and updating Knowledge Graph.", action="update_kg")
             await self._check_pause_and_step()
 
@@ -450,10 +557,20 @@ class CircuitAgent:
 
             # COMPLETION
             self.state = AgentState.COMPLETED
+            self.current_phase = {
+                "step": 6,
+                "step_index": 5,
+                "total_steps": 6,
+                "step_name": "Knowledge & Reflection",
+                "state": "COMPLETED",
+                "thought": f"Task successfully completed for {circuit_name}!"
+            }
             self.log_thought(f"Task successfully completed for {circuit_name}!", action="task_complete")
             await self.broadcast_event("agent_state_change", {"state": "COMPLETED"})
 
         except Exception as e:
             self.state = AgentState.ERROR
+            if self.current_phase:
+                self.current_phase["state"] = "ERROR"
             self.log_thought(f"Error during execution: {str(e)}", action="error")
             await self.broadcast_event("agent_state_change", {"state": "ERROR", "error": str(e)})

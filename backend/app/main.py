@@ -158,6 +158,13 @@ class FileRenameRequest(BaseModel):
 def list_projects():
     return project_mgr.list_projects()
 
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str):
+    p = project_mgr.get_project(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    return p
+
 @app.post("/api/projects/create")
 def create_project(req: ProjectCreateRequest):
     return project_mgr.create_project(
@@ -453,6 +460,29 @@ async def chat_with_agent(req: AgentChatRequest):
             "timestamp": time.time(),
             "data": sim_res
         })
+
+    # If action is apply_code, automatically write to active project on disk
+    if action and action.get("type") in ("apply_code", "synthesize") and action.get("vhdl_code"):
+        c_code = action["vhdl_code"]
+        c_name = action.get("circuit_name") or (req.circuit_context or {}).get("circuit_name", "circuit_top")
+        target_pid = req.project_id or (req.circuit_context or {}).get("project_id") or "scale1_full_adder"
+        target_path = action.get("file_path") or f"src/{c_name}.vhd"
+        try:
+            project_mgr.write_file(target_pid, target_path, c_code)
+            await global_bus.broadcast({
+                "type": "project_files_updated",
+                "timestamp": time.time(),
+                "data": {
+                    "project_id": target_pid,
+                    "action": "chat_apply_code",
+                    "path": target_path,
+                    "files": [target_path],
+                    "top_file": target_path,
+                    "circuit_name": c_name
+                }
+            })
+        except Exception:
+            pass
 
     return res
 

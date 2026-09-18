@@ -5,5 +5,6 @@
   "scale_label": "Scale 1: Gate Level",
   "description": "Constructed from 2 XOR, 2 AND, and 1 OR gate with full testbench.",
   "created_at": 1789518725.0696685,
-  "last_modified": 1789599233.1977673,
+  "last_modified": 1789701812.0987196,
   "top_file": "src/full_adder.vhd"
+}

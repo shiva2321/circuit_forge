@@ -736,7 +736,7 @@ class OpenRouterClient:
         wire_count = ctx.get("wire_count", 0)
         probes = ctx.get("probes", {})
         faults = ctx.get("faults", {})
-        proj_id = project_id or "scale1_full_adder"
+        proj_id = project_id or (ctx.get("project_id") if ctx else None) or (ctx.get("active_project_id") if ctx else None) or "scale1_full_adder"
 
         # ── 1. Autonomous Frontier Tool Calling Loop (If API Key Available) ───────
         if key and len(key) > 10:

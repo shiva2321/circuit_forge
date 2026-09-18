@@ -29,6 +29,7 @@ import { CodeEditor } from './CodeEditor';
 import { WaveformViewer } from './WaveformViewer';
 import { KnowledgeGraphVisualizer } from './KnowledgeGraphVisualizer';
 import { AgentDeck, AgentPhaseProgress } from './AgentDeck';
+import { writeProjectFile } from '../services/api';
 
 export type ToolWindowId = 'schematic' | 'editor' | 'waveform' | 'agent' | 'kg';
 export type StudioLayoutMode = 'split' | 'tile' | 'float';
@@ -1052,6 +1053,8 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             onLaunchTask={onLaunchTask}
             onRunSimulation={onRunSimulation}
             circuitContext={{
+              project_id: activeProjectId,
+              active_project_id: activeProjectId,
               circuit_name: selectedCircuit,
               vhdl_code: vhdlCode,
               gate_count: netlist?.nodes.length || 0,
@@ -1085,6 +1088,9 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               handlePushVhdlHistory(vhdlCode);
               onChangeCode(code);
               onSynthesizeAndSimulate(code);
+              if (activeProjectId && topFilePath) {
+                writeProjectFile(activeProjectId, topFilePath, code).catch(() => {});
+              }
             }}
             onStopAgent={() => onAgentIntervention('stop')}
             onRevertAgent={vhdlHistoryRef.current.length > 0 ? () => {

@@ -337,6 +337,11 @@ export async function listProjects(): Promise<ProjectMeta[]> {
   return res.json();
 }
 
+export async function getProject(projectId: string): Promise<ProjectMeta> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}`);
+  return res.json();
+}
+
 export async function createProject(data: {
   name: string;
   scale?: number;

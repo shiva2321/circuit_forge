@@ -139,10 +139,15 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenProjectManager}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 hover:border-indigo-500 text-indigo-300 hover:text-white text-xs font-semibold shadow-sm transition cursor-pointer"
-            title="Open Project Manager: Browse workspace directories, open recent projects, or create a new design"
+            title={`Active Workspace: ${activeProjectName || 'Default'}. Click to browse projects or create a new design.`}
           >
             <FolderTree className="w-3.5 h-3.5 text-indigo-400" />
             <span>Projects</span>
+            {activeProjectName && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-900/80 border border-indigo-700 text-indigo-200 max-w-[120px] truncate hidden sm:inline">
+                {activeProjectName}
+              </span>
+            )}
           </button>
         )}
 

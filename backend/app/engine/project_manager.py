@@ -410,6 +410,84 @@ class ProjectManager:
         projects.sort(key=lambda p: p.get("last_modified", 0), reverse=True)
         return projects
 
+    def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves metadata for a specific project by id."""
+        if not project_id:
+            return None
+        proj_dir = os.path.join(self.base_dir, project_id)
+        if not os.path.exists(proj_dir):
+            return None
+        meta_path = os.path.join(proj_dir, "project.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    meta["path"] = proj_dir
+                    file_count = sum(len(files) for _, _, files in os.walk(proj_dir) if not any(p.startswith('.') for p in files))
+                    meta["file_count"] = file_count
+                    return meta
+            except Exception:
+                pass
+        top_f = self.get_top_file(project_id)
+        return {
+            "id": project_id,
+            "name": project_id.replace("_", " ").title(),
+            "scale": 1,
+            "scale_label": "Custom Project",
+            "description": "User created workspace project",
+            "path": proj_dir,
+            "file_count": 1,
+            "top_file": top_f,
+            "last_modified": os.path.getmtime(proj_dir) if os.path.exists(proj_dir) else time.time()
+        }
+
+    def get_top_file(self, project_id: str) -> Optional[str]:
+        """Returns the relative path to the primary top-level design source file for a project."""
+        if not project_id:
+            return None
+        proj_dir = os.path.join(self.base_dir, project_id)
+        if not os.path.exists(proj_dir):
+            return None
+        meta_path = os.path.join(proj_dir, "project.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    if meta.get("top_file"):
+                        return meta["top_file"]
+            except Exception:
+                pass
+
+        # Search src/ directory for .vhd, .vhdl, .v, .sv files
+        src_dir = os.path.join(proj_dir, "src")
+        if os.path.exists(src_dir):
+            candidates = []
+            for f in sorted(os.listdir(src_dir)):
+                fl = f.lower()
+                if fl.endswith((".vhd", ".vhdl", ".v", ".sv")) and "tb" not in fl:
+                    candidates.append(f"src/{f}")
+            if candidates:
+                # Prefer one matching the project_id name
+                for c in candidates:
+                    if project_id.lower() in c.lower():
+                        return c
+                return candidates[0]
+
+        # Search main/ directory (for embedded platforms)
+        main_dir = os.path.join(proj_dir, "main")
+        if os.path.exists(main_dir):
+            for f in sorted(os.listdir(main_dir)):
+                fl = f.lower()
+                if fl.endswith((".c", ".cpp", ".py", ".rs")):
+                    return f"main/{f}"
+
+        # Root directory fallback
+        for f in sorted(os.listdir(proj_dir)):
+            fl = f.lower()
+            if fl.endswith((".vhd", ".vhdl", ".v", ".sv", ".c", ".py")) and not fl.startswith("."):
+                return f
+        return "src/full_adder.vhd"
+
     def create_project(self, name: str, scale: int = 1, template_type: str = "rtl", description: str = "") -> Dict[str, Any]:
         proj_id = name.lower().replace(" ", "_").replace("-", "_")
         proj_id = "".join(c for c in proj_id if c.isalnum() or c == "_")

@@ -24,6 +24,8 @@ import {
   configureAgent,
   writeProjectFile,
   readProjectFile,
+  getProject,
+  getProjectTree,
 } from './services/api';
 import { evaluateCircuitLogic } from './utils/circuitSimulator';
 import { netlistToVHDL } from './utils/netlistToVHDL';
@@ -220,19 +222,62 @@ export function App() {
 
   const handleSelectProject = async (projectId: string) => {
     setActiveProjectId(projectId);
+    activeProjectIdRef.current = projectId;
     localStorage.setItem('circuitforge_project_initialized', 'true');
+    localStorage.setItem('circuitforge_active_project', projectId);
 
-    const mapping: Record<string, string> = {
-      scale1_full_adder: 'src/full_adder.vhd',
-      scale2_counter: 'src/counter_8bit.vhd',
-      scale3_alu: 'src/alu_32bit.vhd',
-      scale4_riscv: 'src/riscv_rv32i.vhd',
-    };
-    const targetTop = mapping[projectId] || 'src/full_adder.vhd';
+    let targetTop = 'src/full_adder.vhd';
+    let projectName = projectId;
+
+    try {
+      // 1. Query project metadata from backend
+      const meta = await getProject(projectId);
+      if (meta) {
+        if (meta.name) projectName = meta.name;
+        if (meta.top_file) targetTop = meta.top_file;
+      }
+    } catch {
+      const mapping: Record<string, string> = {
+        scale1_full_adder: 'src/full_adder.vhd',
+        scale2_counter: 'src/counter_8bit.vhd',
+        scale3_alu: 'src/alu_32bit.vhd',
+        scale4_riscv: 'src/riscv_rv32i.vhd',
+      };
+      targetTop = mapping[projectId] || 'src/full_adder.vhd';
+    }
+
+    // 2. If targetTop still default and project is custom, discover from file tree
+    if (targetTop === 'src/full_adder.vhd' && projectId !== 'scale1_full_adder') {
+      try {
+        const treeRes = await getProjectTree(projectId);
+        if (treeRes && treeRes.tree) {
+          const findFirstRtl = (nodes: any[]): string | null => {
+            for (const n of nodes) {
+              if (n.is_dir && n.children) {
+                const found = findFirstRtl(n.children);
+                if (found) return found;
+              } else if (!n.is_dir && n.path) {
+                const p = n.path.toLowerCase();
+                if ((p.endsWith('.vhd') || p.endsWith('.vhdl') || p.endsWith('.v') || p.endsWith('.sv')) && !p.includes('tb')) {
+                  return n.path;
+                }
+              }
+            }
+            return null;
+          };
+          const found = findFirstRtl(treeRes.tree);
+          if (found) targetTop = found;
+        }
+      } catch {}
+    }
+
     setTopFilePath(targetTop);
+    topFilePathRef.current = targetTop;
+    setTargetOpenFilePath(targetTop);
 
-    const targetCircuit = projectToCircuitMap[projectId] || projectId;
+    const targetCircuit = projectToCircuitMap[projectId] || projectName || projectId;
     setSelectedCircuit(targetCircuit);
+    selectedCircuitRef.current = targetCircuit;
 
     if (isAutosaveEnabled) {
       try {
@@ -249,7 +294,24 @@ export function App() {
       setActiveFaults({});
     }
 
-    await loadCircuit(targetCircuit, false);
+    // 3. Load active file content and synthesize schematic netlist
+    try {
+      const fileData = await readProjectFile(projectId, targetTop);
+      if (fileData && fileData.content && fileData.content.trim()) {
+        setVhdlCode(fileData.content);
+        const net = await synthesizeVHDL(fileData.content, targetCircuit);
+        if (net && net.nodes && net.nodes.length > 0) {
+          setNetlist(net);
+        }
+      } else {
+        await loadCircuit(targetCircuit, false);
+      }
+    } catch {
+      await loadCircuit(targetCircuit, false);
+    }
+
+    // 4. Force CodeEditor and tree to synchronize
+    setCodeEditorReloadVersion((v) => v + 1);
   };
 
   // Global mousemove and mouseup listeners for smooth dragging across canvas & Monaco
@@ -336,13 +398,17 @@ export function App() {
   const agentStateRef = useRef(agentState);
   agentStateRef.current = agentState;
 
-  // Initialize catalog and synthesize initial circuit
+  // Initialize catalog and restore active project or synthesize initial circuit
   useEffect(() => {
     const init = async () => {
       try {
         const cat = await getCircuitsCatalog();
         setCircuits(cat);
-        if (cat.length > 0) {
+
+        const savedProj = localStorage.getItem('circuitforge_active_project');
+        if (savedProj) {
+          await handleSelectProject(savedProj);
+        } else if (cat.length > 0) {
           const initial = cat[0].id;
           setSelectedCircuit(initial);
           await loadCircuit(initial);
@@ -1011,6 +1077,7 @@ end rtl;`);
         onToggleAutosave={handleToggleAutosave}
         saveStatusText={globalSaveText}
         saveStatusState={globalSaveState}
+        activeProjectName={activeProjectId}
       />
 
       {/* Main Workspace Area */}
@@ -1155,6 +1222,8 @@ end rtl;`);
               onLaunchTask={handleLaunchTask}
               onRunSimulation={handleRunSimulation}
               circuitContext={{
+                project_id: activeProjectId,
+                active_project_id: activeProjectId,
                 circuit_name: selectedCircuit,
                 vhdl_code: vhdlCode,
                 gate_count: netlist?.nodes.length || 0,
@@ -1196,6 +1265,11 @@ end rtl;`);
               onApplyDesignToCanvas={(code) => {
                 setVhdlCode(code);
                 handleSynthesizeVHDL(code);
+                if (activeProjectId && topFilePath) {
+                  writeProjectFile(activeProjectId, topFilePath, code)
+                    .then(() => setCodeEditorReloadVersion((v) => v + 1))
+                    .catch(() => {});
+                }
               }}
             />
           </div>

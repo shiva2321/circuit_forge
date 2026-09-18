@@ -15,6 +15,14 @@ def clean_hardware_name(name: str, default: str = "dsp_mac_pipeline") -> str:
     """Sanitizes raw circuit names, mapping goals and removing task_ hashes to produce clean hardware identifiers."""
     if not name or name in ("custom_circuit", "custom_design"):
         return default
+
+    clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', name.strip().lower())
+    clean_id = re.sub(r'_+', '_', clean_id).strip('_')
+    # If the user passed a specific valid hardware identifier (no spaces, no task_ hash, not generic sentence)
+    if clean_id and not name.startswith("task_") and " " not in name.strip():
+        if clean_id not in ("circuit", "custom", "design", "module", "unit", "hardware"):
+            return clean_id
+
     g = name.lower()
     if any(k in g for k in ("neuron", "neural", "synapse", "brain", "ann", "display")):
         return "neural_processor_top"

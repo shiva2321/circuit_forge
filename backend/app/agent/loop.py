@@ -19,6 +19,7 @@ from backend.app.agent.hardware_generator import (
     generate_64bit_microprocessor_suite,
     materialize_design_into_project
 )
+from backend.app.engine.project_manager import project_mgr
 
 class AgentState(Enum):
     IDLE = "IDLE"
@@ -283,10 +284,9 @@ class CircuitAgent:
             )
 
             # ── Hardware File Materialization ─────────────────────────────────────────
-            # For large-scale (processor/subsystem) goals, write full multi-file
-            # VHDL project suite to disk and notify the Studio to reload.
+            # Write full synthesizable VHDL project suite or RTL design to the active project workspace
             effective_scale = detect_design_scale(goal) if scale <= 1 else scale
-            if effective_scale >= 3 and project_id:
+            if project_id:
                 try:
                     if any(k in goal.lower() for k in ("neuron", "neural", "synapse", "brain", "ann", "display")):
                         self.log_thought(
@@ -294,20 +294,64 @@ class CircuitAgent:
                             action="materialize_start"
                         )
                         suite = generate_32_neuron_suite(circuit_name)
-                    elif effective_scale == 3:
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    elif effective_scale == 3 or any(k in goal.lower() for k in ("dsp", "mac", "multiply", "accumulat", "accelerator")):
                         self.log_thought(
                             f"Scale 3 DSP subsystem detected — generating pipelined MAC hardware suite for '{circuit_name}'…",
                             action="materialize_start"
                         )
                         suite = generate_dsp_mac_suite(circuit_name)
-                    else:
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    elif effective_scale >= 4 or any(k in goal.lower() for k in ("riscv", "cpu", "processor", "core", "rv32")):
                         self.log_thought(
                             f"Scale {effective_scale} processor core detected — generating multi-file processor suite for '{circuit_name}'…",
                             action="materialize_start"
                         )
                         suite = generate_64bit_microprocessor_suite(circuit_name)
-                    mat_result = materialize_design_into_project(project_id, suite)
-                    file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                        mat_result = materialize_design_into_project(project_id, suite)
+                        file_list = [f["path"] for f in mat_result.get("files_written", [])]
+                    else:
+                        # Scale 1 or Scale 2 RTL / Gate-level design: write primary RTL, TB, and spec into active project
+                        top_rel = f"src/{circuit_name}.vhd"
+                        project_mgr.write_file(project_id, top_rel, design_res["vhdl_code"])
+                        file_list = [top_rel]
+
+                        tb_code = (
+                            "library IEEE;\nuse IEEE.STD_LOGIC_1164.ALL;\n\n"
+                            f"entity {circuit_name}_tb is\nend {circuit_name}_tb;\n\n"
+                            f"architecture sim of {circuit_name}_tb is\n"
+                            "    signal clk : STD_LOGIC := '0';\n"
+                            "    signal rst : STD_LOGIC := '1';\n"
+                            "begin\n"
+                            "    clk <= not clk after 5 ns;\n"
+                            f"    uut: entity work.{circuit_name} port map (clk => clk, rst => rst);\n"
+                            "    process begin\n"
+                            "        rst <= '1'; wait for 20 ns;\n"
+                            "        rst <= '0'; wait for 100 ns;\n"
+                            "        wait;\n"
+                            "    end process;\n"
+                            "end sim;\n"
+                        )
+                        tb_rel = f"tb/{circuit_name}_tb.vhd"
+                        project_mgr.write_file(project_id, tb_rel, tb_code)
+                        file_list.append(tb_rel)
+
+                        spec_code = (
+                            f"# Architecture Specification: {circuit_name}\n\n"
+                            f"- **Goal**: {goal}\n"
+                            f"- **Scale**: {effective_scale}\n"
+                            f"- **Primary RTL**: `{top_rel}`\n"
+                            f"- **Testbench**: `{tb_rel}`\n"
+                            f"- **Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        )
+                        spec_rel = f"docs/{circuit_name}_spec.md"
+                        project_mgr.write_file(project_id, spec_rel, spec_code)
+                        file_list.append(spec_rel)
+
+                        mat_result = {"top_file": top_rel, "modules": [circuit_name]}
+
                     self.log_thought(
                         f"Materialized {len(file_list)} files into project '{project_id}': {', '.join(file_list[:4])}{'…' if len(file_list) > 4 else ''}",
                         action="materialize_complete",
@@ -316,8 +360,8 @@ class CircuitAgent:
                     await self.broadcast_event("project_files_updated", {
                         "project_id": project_id,
                         "files": file_list,
-                        "top_file": mat_result.get("top_file", ""),
-                        "modules": mat_result.get("modules", []),
+                        "top_file": mat_result.get("top_file", f"src/{circuit_name}.vhd"),
+                        "modules": mat_result.get("modules", [circuit_name]),
                         "circuit_name": circuit_name,
                         "scale": effective_scale,
                     })

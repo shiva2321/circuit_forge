@@ -402,11 +402,12 @@ async def chat_with_agent(req: AgentChatRequest):
     clean_user_message = sanitize_credentials(req.message)
 
     # Broadcast user chat message to WebSocket safely
+    ms_now = int(time.time() * 1000)
     await global_bus.broadcast({
         "type": "agent_thought",
-        "timestamp": time.time(),
+        "timestamp": ms_now,
         "data": {
-            "time": time.time(),
+            "time": ms_now,
             "state": "CO-PILOT",
             "action": "user_chat",
             "thought": f"Human Co-Pilot: '{clean_user_message}'"

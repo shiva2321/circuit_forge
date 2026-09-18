@@ -11,7 +11,13 @@ from typing import Dict, List, Any, Optional
 from enum import Enum
 from backend.app.agent.tools import CircuitTools
 from backend.app.agent.openrouter import openrouter_client
-from backend.app.agent.hardware_generator import detect_design_scale, generate_64bit_microprocessor_suite, materialize_design_into_project
+from backend.app.agent.hardware_generator import (
+    detect_design_scale,
+    clean_hardware_name,
+    generate_dsp_mac_suite,
+    generate_64bit_microprocessor_suite,
+    materialize_design_into_project
+)
 
 class AgentState(Enum):
     IDLE = "IDLE"
@@ -51,7 +57,7 @@ class CircuitAgent:
 
     def log_thought(self, thought: str, action: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
         entry = {
-            "time": time.time(),
+            "time": int(time.time() * 1000),
             "state": self.state.value,
             "thought": thought,
             "action": action,
@@ -128,9 +134,11 @@ class CircuitAgent:
         project_id: Optional[str] = None,
     ):
         """Autonomous end-to-end design, lint, synthesis, simulation, and learning pipeline with live progress."""
+        clean_name = clean_hardware_name(circuit_name, default="dsp_mac_pipeline" if scale == 3 else "processor_top" if scale >= 4 else "custom_circuit")
         self.current_goal = goal
         self.current_scale = scale
-        self.current_circuit_name = circuit_name
+        self.current_circuit_name = clean_name
+        circuit_name = clean_name
         self.is_paused = False
         self.step_mode = False
 
@@ -279,11 +287,18 @@ class CircuitAgent:
             effective_scale = detect_design_scale(goal) if scale <= 1 else scale
             if effective_scale >= 3 and project_id:
                 try:
-                    self.log_thought(
-                        f"Scale {effective_scale} design detected — generating multi-file VHDL suite for '{circuit_name}'…",
-                        action="materialize_start"
-                    )
-                    suite = generate_64bit_microprocessor_suite(circuit_name)
+                    if effective_scale == 3:
+                        self.log_thought(
+                            f"Scale 3 DSP subsystem detected — generating pipelined MAC hardware suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_dsp_mac_suite(circuit_name)
+                    else:
+                        self.log_thought(
+                            f"Scale {effective_scale} processor core detected — generating multi-file processor suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_64bit_microprocessor_suite(circuit_name)
                     mat_result = materialize_design_into_project(project_id, suite)
                     file_list = [f["path"] for f in mat_result.get("files_written", [])]
                     self.log_thought(

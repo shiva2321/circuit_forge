@@ -51,14 +51,63 @@ class CircuitTools:
 
     def design_circuit(self, name: str, scale: int, specification: str, vhdl_code: Optional[str] = None) -> Dict[str, Any]:
         """Designs a circuit matching the specification, creates VHDL and registers it in the Knowledge Graph."""
-        safe_name = sanitize_vhdl_identifier(name)
+        from backend.app.agent.hardware_generator import clean_hardware_name
+        clean_name = clean_hardware_name(name, default="dsp_mac_pipeline" if scale == 3 else "processor_top" if scale >= 4 else "full_adder")
+        safe_name = sanitize_vhdl_identifier(clean_name)
 
         if not vhdl_code:
             spec_lower = (specification or "").lower()
             name_lower = (name or "").lower()
             combined = f"{name_lower} {spec_lower}"
 
-            if "mux" in combined or "multiplex" in combined:
+            if any(k in combined for k in ("useful", "demo", "dsp", "mac", "multiply", "accumulat", "accelerator")):
+                vhdl_code = f"""library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity {safe_name} is
+    port (
+        clk       : in  std_logic;
+        rst       : in  std_logic;
+        valid_in  : in  std_logic;
+        clr_acc   : in  std_logic;
+        a_in      : in  std_logic_vector(7 downto 0);
+        b_in      : in  std_logic_vector(7 downto 0);
+        accum_out : out std_logic_vector(15 downto 0);
+        overflow  : out std_logic;
+        valid_out : out std_logic
+    );
+end {safe_name};
+
+architecture rtl of {safe_name} is
+    signal p_reg : signed(15 downto 0) := (others => '0');
+    signal a_reg : signed(16 downto 0) := (others => '0');
+    signal v_reg : std_logic := '0';
+begin
+    -- Pipelined DSP Multiply-Accumulate matching spec: {specification}
+    process(clk, rst)
+    begin
+        if rst = '1' then
+            p_reg <= (others => '0');
+            a_reg <= (others => '0');
+            v_reg <= '0';
+        elsif rising_edge(clk) then
+            v_reg <= valid_in;
+            if valid_in = '1' then
+                p_reg <= signed(a_in) * signed(b_in);
+            end if;
+            if clr_acc = '1' then
+                a_reg <= (others => '0');
+            elsif v_reg = '1' then
+                a_reg <= a_reg + resize(p_reg, 17);
+            end if;
+        end if;
+    end process;
+    accum_out <= std_logic_vector(a_reg(15 downto 0));
+    overflow  <= a_reg(16) xor a_reg(15);
+    valid_out <= v_reg;
+end rtl;"""
+            elif "mux" in combined or "multiplex" in combined:
                 vhdl_code = f"""library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 

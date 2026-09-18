@@ -460,7 +460,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     });
 
     return Object.entries(groups)
-      .filter(([_, g]) => g.nodes.length >= 2)
+      .filter(([_, g]) => {
+        // Enclosure should only be drawn if it represents a distinct SUBMODULE, not the entire top-level netlist!
+        if (g.nodes.length >= netlist.nodes.length) return false;
+        // If all nodes come from a single file and no parent_instance exists, suppress full-canvas enclosure
+        if (fileOriginsList.length <= 1 && !g.nodes.some((n) => n.parent_instance)) return false;
+        return g.nodes.length >= 2;
+      })
       .map(([key, g]) => {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         g.nodes.forEach((n) => {
@@ -3804,8 +3810,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     </g>
                   )}
 
-                  {/* Inheritance Port Mapping Wire Badge */}
-                  {wire.is_inherited && (
+                  {/* Inheritance Port Mapping Wire Badge - Show only on selection or hover */}
+                  {wire.is_inherited && (isSelected || hoveredWireId === wire.id) && (
                     <g transform={`translate(${badgeX}, ${badgeY + 15})`}>
                       <rect
                         x="-65"
@@ -3981,29 +3987,48 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                   strokeDasharray="6 4"
                   strokeOpacity="0.8"
                 />
-                <g transform={`translate(${enc.x + 12}, ${enc.y - 12})`}>
-                  <rect
-                    x="0"
-                    y="0"
-                    width={Math.max(130, (enc.module.length + enc.file.length) * 6.5 + 40)}
-                    height="20"
-                    rx="5"
-                    fill={enc.palette.headerBg}
-                    stroke={enc.palette.border}
-                    strokeWidth="1"
-                    className="shadow-md"
-                  />
-                  <text
-                    x="8"
-                    y="14"
-                    fill={enc.palette.text}
-                    fontSize="10"
-                    fontFamily="ui-monospace, monospace"
-                    fontWeight="bold"
-                  >
-                    📦 {enc.module} ({formatFileLabel(enc.file)}) • {enc.nodeCount} gates
-                  </text>
-                </g>
+                {(() => {
+                  const rawMod = enc.module || '';
+                  const cleanMod = rawMod
+                    .replace(/\.[^/.]+$/, '')
+                    .replace(/^task_/i, '')
+                    .replace(/_[a-z0-9]{6,}$/i, '')
+                    .replace(/_/g, ' ')
+                    .trim();
+                  const titleText = cleanMod.length > 0
+                    ? cleanMod.replace(/\b\w/g, (l) => l.toUpperCase())
+                    : 'Submodule';
+                  const fileText = formatFileLabel(enc.file)
+                    .replace(/^task_/i, '')
+                    .replace(/_[a-z0-9]{6,}\.vhd$/i, '.vhd');
+                  const labelStr = `📦 ${titleText} (${fileText}) • ${enc.nodeCount} gates`;
+                  const headerW = Math.max(130, labelStr.length * 6.5 + 20);
+                  return (
+                    <g transform={`translate(${enc.x + 12}, ${enc.y - 12})`}>
+                      <rect
+                        x="0"
+                        y="0"
+                        width={headerW}
+                        height="20"
+                        rx="5"
+                        fill={enc.palette.headerBg}
+                        stroke={enc.palette.border}
+                        strokeWidth="1"
+                        className="shadow-md"
+                      />
+                      <text
+                        x="8"
+                        y="14"
+                        fill={enc.palette.text}
+                        fontSize="10"
+                        fontFamily="ui-monospace, monospace"
+                        fontWeight="bold"
+                      >
+                        {labelStr}
+                      </text>
+                    </g>
+                  );
+                })()}
               </g>
             ))}
 
@@ -4092,12 +4117,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                   )}
 
                   {/* Multi-File Origin Badge & Inheritance Tracking */}
-                  {node.source_file && (
+                  {(fileOriginsList.length > 1 || isFileLegendOpen) && node.source_file && (
                     <g transform={`translate(2, -16)`} className="pointer-events-none select-none">
                       {(() => {
                         const filePal = getFilePalette(node.source_file);
-                        const fileLabel = formatFileLabel(node.source_file);
-                        const badgeWidth = Math.max(55, fileLabel.length * 6.5 + 22);
+                        let fileLabel = formatFileLabel(node.source_file);
+                        fileLabel = fileLabel.replace(/^task_/i, '').replace(/_[a-z0-9]{6,}\.vhd$/i, '.vhd');
+                        const badgeWidth = Math.max(45, fileLabel.length * 6 + 18);
+
+                        const rawParent = node.parent_instance || '';
+                        const parentClean = rawParent.replace(/^task_/i, '').replace(/_[a-z0-9]{6,}$/i, '');
+                        const showParent = parentClean.length > 0 && parentClean !== fileLabel.replace(/\.[^/.]+$/, '');
+                        const parentWidth = showParent ? parentClean.length * 6 + 14 : 0;
+
                         return (
                           <g>
                             <rect
@@ -4122,12 +4154,12 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                             >
                               📄 {fileLabel}
                             </text>
-                            {node.parent_instance && (
+                            {showParent && (
                               <g transform={`translate(${badgeWidth + 4}, 0)`}>
                                 <rect
                                   x="0"
                                   y="0"
-                                  width={node.parent_instance.length * 6 + 16}
+                                  width={parentWidth}
                                   height="14"
                                   rx="3"
                                   fill="#1e1b4b"
@@ -4135,14 +4167,14 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                                   strokeWidth="0.75"
                                 />
                                 <text
-                                  x={(node.parent_instance.length * 6 + 16) / 2}
+                                  x={parentWidth / 2}
                                   y="10.5"
                                   textAnchor="middle"
                                   fill="#c7d2fe"
                                   fontSize="8"
                                   fontFamily="ui-monospace, monospace"
                                 >
-                                  ↳ {node.parent_instance}
+                                  ↳ {parentClean}
                                 </text>
                               </g>
                             )}

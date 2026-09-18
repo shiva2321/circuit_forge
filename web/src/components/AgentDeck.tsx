@@ -154,10 +154,29 @@ const ENGINEERING_ACTIONS = new Set([
   'run_assertion', 'timing_analysis', 'place_route', 'bitstream_gen',
 ]);
 
+export const deriveCleanCircuitName = (goal: string): string => {
+  const g = goal.toLowerCase();
+  if (/dsp|mac|multiply|accumulat/.test(g)) return 'dsp_mac_pipeline';
+  if (/processor|microprocessor|cpu|riscv|risc-v|rv32|rv64|core/.test(g)) return 'riscv_cpu_core';
+  if (/alu|arithmetic/.test(g)) return 'alu_acc_subsystem';
+  if (/uart|serial|baud|rx|tx/.test(g)) return 'uart_transceiver';
+  if (/counter|timer/.test(g)) return 'counter_8bit';
+  if (/fsm|traffic/.test(g)) return 'traffic_fsm';
+  if (/fifo|queue/.test(g)) return 'sync_fifo';
+  if (/adder/.test(g)) return 'full_adder';
+  if (/useful|demo|accelerator|pipeline|subsystem/.test(g)) return 'dsp_mac_pipeline';
+
+  const words = g.replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/).filter(w => !['build', 'create', 'design', 'make', 'something', 'and', 'show', 'the', 'a', 'an', 'to'].includes(w));
+  if (words.length > 0) {
+    return words.slice(0, 3).join('_') + '_unit';
+  }
+  return 'dsp_mac_pipeline';
+};
+
 const inferScale = (goal: string): number => {
   const g = goal.toLowerCase();
-  if (/processor|microprocessor|cpu|riscv|risc-v|rv32|rv64|pipeline|core/.test(g)) return 4;
-  if (/alu|subsystem|controller|fsm|uart|dsp|decoder|multiplier|mac/.test(g)) return 3;
+  if (/processor|microprocessor|cpu|riscv|risc-v|rv32|rv64|core/.test(g)) return 4;
+  if (/alu|subsystem|controller|fsm|uart|dsp|decoder|multiplier|mac|useful|demo|accelerator|pipeline/.test(g)) return 3;
   if (/counter|register|shift|timer|fifo|accumulator/.test(g)) return 2;
   return 1;
 };
@@ -1077,7 +1096,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
       }
 
       if (res.action?.type === 'design' && res.action.goal) {
-        const cleanName = `circuit_${Date.now().toString(36)}`;
+        const cleanName = deriveCleanCircuitName(res.action.goal);
         const scale = inferScale(res.action.goal);
         onLaunchTask(res.action.goal, scale, cleanName, openrouterKey, selectedModel);
       } else if (res.action?.type === 'simulate' && onRunSimulation) {
@@ -1096,10 +1115,19 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
     e.preventDefault();
     const goal = steerPrompt.trim();
     if (!goal) return;
-    const cleanName = `task_${goal.slice(0, 12).replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase()}_${Date.now().toString(36)}`;
+    const cleanName = deriveCleanCircuitName(goal);
     const scale = inferScale(goal);
     onLaunchTask(goal, scale, cleanName, openrouterKey, selectedModel);
-    setUserChatMessages(prev => [...prev, { id: `msg_${Date.now()}`, time: Date.now(), text: goal }]);
+    setUserChatMessages(prev => [
+      ...prev,
+      { id: `msg_${Date.now()}`, time: Date.now(), text: goal },
+      {
+        id: `agent_${Date.now()}`,
+        time: Date.now(),
+        text: `🚀 **Autonomous EDA Pipeline Initiated**: Launching end-to-end hardware synthesis, DRC linting, schematic generation, and cycle simulation for **${cleanName}** (Scale ${scale}). Monitor live pipeline phases and engineering logs below.`,
+        isAgent: true,
+      }
+    ]);
     setSteerPrompt('');
     setContextChips([]);
   }, [steerPrompt, onLaunchTask, openrouterKey, selectedModel]);
@@ -1212,7 +1240,11 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
 
   // ── Engineering Log Filter (Session-scoped) ─────────────────────────────────
   const currentSessionLogs = useMemo(() =>
-    logs.filter(log => (log.time || 0) >= clearedLogsTimestamp),
+    logs.filter(log => {
+      const rawTime = log.time || 0;
+      const normalizedTime = rawTime < 1e11 ? rawTime * 1000 : rawTime;
+      return normalizedTime >= clearedLogsTimestamp;
+    }),
     [logs, clearedLogsTimestamp]
   );
 
@@ -3086,16 +3118,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (agentState === 'IDLE' || agentState === 'COMPLETED') {
-              // Long goal → launch autonomous pipeline
-              if (steerPrompt.trim().length > 30) {
-                handleLaunchGoal(e);
-              } else {
-                handleSendSteer(e);
-              }
-            } else {
-              handleSendSteer(e);
-            }
+            handleSendSteer(e);
           }}
           className="space-y-1.5"
         >
@@ -3241,7 +3264,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
               ) : (
                 <>
                   <Send className="w-3.5 h-3.5" />
-                  <span>{steerPrompt.trim().length > 30 ? 'Launch Task' : 'Send'}</span>
+                  <span>{isCopilotThinking ? 'Thinking...' : 'Send'}</span>
                 </>
               )}
             </button>

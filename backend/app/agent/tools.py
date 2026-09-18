@@ -487,12 +487,30 @@ end rtl;"""
             "messages": [m.__dict__ for m in res.lint_messages]
         }
 
+    def auto_fix_drc(
+        self,
+        project_id: Optional[str] = None,
+        target_file: Optional[str] = None,
+        vhdl_code: Optional[str] = None,
+        circuit_name: Optional[str] = None,
+        issues: Optional[List[Any]] = None
+    ) -> Dict[str, Any]:
+        """Automatically repairs all DRC violations, ties floating pins to safe levels, and synthesizes clean circuit."""
+        return self.eda_repair_and_synthesize(
+            circuit_name=circuit_name or "repaired_circuit",
+            vhdl_code=vhdl_code,
+            issues=issues,
+            project_id=project_id,
+            target_file=target_file
+        )
+
     def eda_repair_and_synthesize(
         self,
         circuit_name: str = "active_circuit",
         vhdl_code: Optional[str] = None,
-        issues: Optional[List[str]] = None,
-        project_id: Optional[str] = None
+        issues: Optional[List[Any]] = None,
+        project_id: Optional[str] = None,
+        target_file: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Diagnoses floating inputs, bus contention, syntax errors, and unrouted signals,
@@ -502,11 +520,23 @@ end rtl;"""
         code = (vhdl_code or self.last_vhdl or "").strip()
         p_id = project_id or "scale1_full_adder"
 
+        norm_issues: List[str] = []
+        if issues:
+            for iss in issues:
+                if isinstance(iss, dict):
+                    t_node = iss.get("target_node") or iss.get("target") or ""
+                    t_port = iss.get("target_port") or ""
+                    code_id = iss.get("code") or "DRC"
+                    msg = iss.get("message") or iss.get("title") or ""
+                    norm_issues.append(f"{code_id} on {t_node}.{t_port}: {msg}".strip())
+                elif isinstance(iss, str):
+                    norm_issues.append(iss)
+
         if not code and p_id:
-            top_path = project_mgr.get_top_file(p_id)
-            if top_path:
+            resolved_path = target_file or project_mgr.get_top_file(p_id)
+            if resolved_path:
                 try:
-                    f = project_mgr.read_file(p_id, top_path)
+                    f = project_mgr.read_file(p_id, resolved_path)
                     code = f.get("content", "").strip()
                 except Exception:
                     pass
@@ -579,10 +609,12 @@ end Structural;"""
                 repairs_applied.append("Added missing IEEE standard logic libraries (STD_LOGIC_1164 and NUMERIC_STD).")
 
             sig_matches = re.findall(r'\bsignal\s+([a-zA-Z0-9_,\s]+)\s*:\s*([^;]+);', repaired, re.IGNORECASE)
-            # Signals assigned via <= or via component port maps
+            # Signals assigned via <= or via component output port maps
             assigned_sigs = {s.lower() for s in re.findall(r'\b([a-zA-Z0-9_]+)\s*<=', repaired, re.IGNORECASE)}
-            for ps in re.findall(r'=>\s*([a-zA-Z0-9_]+)', repaired, re.IGNORECASE):
-                assigned_sigs.add(ps.lower())
+            for formal, actual in re.findall(r'([a-zA-Z0-9_]+)\s*=>\s*([a-zA-Z0-9_]+)', repaired, re.IGNORECASE):
+                formal_l = formal.lower()
+                if any(kw in formal_l for kw in ("out", "dout", "data_out", "rdata", "q", "result", "zero", "carry", "overflow", "ack", "done", "ready_out", "cout")) and not any(kw in formal_l for kw in ("ready_in", "bitstream_ack")):
+                    assigned_sigs.add(actual.lower())
 
             arch_end_matches = list(re.finditer(r'\bend(?:\s+architecture)?(?:\s+[a-zA-Z0-9_]+)?\s*;', repaired, re.IGNORECASE))
             if arch_end_matches:
@@ -618,8 +650,8 @@ end Structural;"""
 
         if p_id:
             try:
-                top_f = project_mgr.get_top_file(p_id) or "src/top.vhd"
-                project_mgr.write_file(p_id, top_f, code)
+                write_f = target_file or project_mgr.get_top_file(p_id) or "src/top.vhd"
+                project_mgr.write_file(p_id, write_f, code)
             except Exception:
                 pass
 
@@ -627,9 +659,11 @@ end Structural;"""
             "success": True,
             "circuit_name": clean_name,
             "vhdl_code": code,
+            "repaired_code": code,
             "netlist": netlist_dict,
             "parse_valid": parse_res.is_valid,
             "repairs_applied": repairs_applied,
+            "repaired_issues_count": len(repairs_applied),
             "drc_status": "CLEAN",
             "active_faults_cleared": True
         }
@@ -1726,6 +1760,21 @@ end Structural;"""
             {
                 "type": "function",
                 "function": {
+                    "name": "eda_auto_fix_drc",
+                    "description": "Automatically repairs all DRC violations, ties floating CMOS inputs to safe logic levels ('0' or '1'), resolves bus contention, clears injected faults, and synthesizes the clean netlist directly into the project workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string", "description": "Target project directory identifier."},
+                            "target_file": {"type": "string", "description": "Optional relative path of VHDL file to repair (e.g. 'src/neural_processor_top.vhd')."},
+                            "vhdl_code": {"type": "string", "description": "Optional custom VHDL code to repair and synthesize."}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "eda_run_simulation",
                     "description": "Executes cycle-accurate digital logic simulation on a circuit, evaluating stimulus vectors, signal waveforms, and verification assertions.",
                     "parameters": {
@@ -2120,12 +2169,13 @@ end Structural;"""
                     circuit_name=args.get("circuit_name", "CircuitForge_System"),
                     payload=args.get("payload") or args
                 )
-            elif tool_name == "eda_repair_and_synthesize":
+            elif tool_name in ("eda_repair_and_synthesize", "eda_auto_fix_drc", "auto_fix_drc"):
                 res = self.eda_repair_and_synthesize(
                     circuit_name=args.get("circuit_name", "active_circuit"),
                     vhdl_code=args.get("vhdl_code"),
                     issues=args.get("issues"),
-                    project_id=p_id
+                    project_id=p_id,
+                    target_file=args.get("target_file") or args.get("path") or args.get("file_path")
                 )
                 if res.get("success") and res.get("netlist"):
                     try:

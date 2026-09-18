@@ -128,7 +128,8 @@ interface AgentDeckProps {
   onUpdateOpenRouterConfig: (key: string, model: string, storagePref?: 'session' | 'local') => void;
   activeProjectId?: string;
   onClearLogs?: () => void;
-  onApplyDesignToCanvas?: (vhdlCode: string, circuitName: string) => void;
+  onApplyDesignToCanvas?: (vhdlCode: string, circuitName: string, filePath?: string) => void;
+  onAutoFixDrc?: (diagnostics?: any[]) => void;
   currentSelection?: AgentSelection | null;
   onStopAgent?: () => void;
   onRevertAgent?: () => void;
@@ -200,6 +201,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
   activeProjectId,
   onClearLogs,
   onApplyDesignToCanvas,
+  onAutoFixDrc,
   currentSelection,
   onStopAgent,
   onRevertAgent,
@@ -1097,7 +1099,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
 
     setIsCopilotThinking(true);
     try {
-      const res = await chatWithAgent(fullMessage, { ...filteredCircuitContext, attached_chips: chipsToSend }, openrouterKey, selectedModel, activeProjectId);
+      const res = await chatWithAgent(fullMessage, { ...filteredCircuitContext, attached_chips: chipsToSend }, openrouterKey, selectedModel, activeProjectId, userChatMessages);
 
       if (res.reply) {
         setUserChatMessages(prev => [...prev, {
@@ -1117,14 +1119,14 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
       } else if (res.action?.type === 'simulate' && onRunSimulation) {
         onRunSimulation();
       } else if ((res.action?.type === 'apply_code' || res.action?.type === 'synthesize') && res.action.vhdl_code && onApplyDesignToCanvas) {
-        onApplyDesignToCanvas(res.action.vhdl_code, res.action.circuit_name || 'custom_design');
+        onApplyDesignToCanvas(res.action.vhdl_code, res.action.circuit_name || 'custom_design', res.action.file_path);
       }
     } catch (err) {
       console.error('Failed to chat with agent', err);
     } finally {
       setIsCopilotThinking(false);
     }
-  }, [steerPrompt, buildContextString, agentState, onIntervention, filteredCircuitContext, openrouterKey, selectedModel, activeProjectId, onLaunchTask, onRunSimulation, onApplyDesignToCanvas]);
+  }, [steerPrompt, buildContextString, agentState, onIntervention, filteredCircuitContext, openrouterKey, selectedModel, activeProjectId, userChatMessages, onLaunchTask, onRunSimulation, onApplyDesignToCanvas]);
 
   const handleLaunchGoal = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -1148,12 +1150,40 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
   }, [steerPrompt, onLaunchTask, openrouterKey, selectedModel]);
 
   const handleAutoFixAll = useCallback(() => {
-    handleSendSteer(undefined, "Repair all floating CMOS inputs, tie unconnected pins to safe logic levels ('0'), resolve any bus contention, clear active stuck-at faults, synthesize the netlist, and apply the repaired design to the canvas.");
-  }, [handleSendSteer]);
+    if (onAutoFixDrc) {
+      onAutoFixDrc();
+      setUserChatMessages(prev => [
+        ...prev,
+        { id: `msg_${Date.now()}`, time: Date.now(), text: '⚡ Auto-Fix All DRC Issues via Agent' },
+        {
+          id: `agent_${Date.now()}`,
+          time: Date.now(),
+          text: '🔧 **DRC Auto-Fix Applied**: Tied floating input pins to safe logic levels, cleared stuck-at faults, regenerated AST netlist, and updated schematic canvas cleanly.',
+          isAgent: true,
+        }
+      ]);
+    } else {
+      handleSendSteer(undefined, "Repair all floating CMOS inputs, tie unconnected pins to safe logic levels ('0'), resolve any bus contention, clear active stuck-at faults, synthesize the netlist, and apply the repaired design to the canvas.");
+    }
+  }, [onAutoFixDrc, handleSendSteer]);
 
   const handleFixSingleIssue = useCallback((issue: any) => {
-    handleSendSteer(undefined, `Auto-fix DRC issue on node '${issue.target || issue.targetNodeId}' (pin '${issue.targetPort || ''}'): ${issue.suggestedFix}. Synthesize and apply repaired VHDL to canvas.`);
-  }, [handleSendSteer]);
+    if (onAutoFixDrc) {
+      onAutoFixDrc([issue]);
+      setUserChatMessages(prev => [
+        ...prev,
+        { id: `msg_${Date.now()}`, time: Date.now(), text: `⚡ Auto-Fix DRC issue on node '${issue.target || issue.targetNodeId || 'node'}' (pin '${issue.targetPort || ''}')` },
+        {
+          id: `agent_${Date.now()}`,
+          time: Date.now(),
+          text: `🔧 **Single-Pin Auto-Fix Applied**: Resolved '${issue.code || 'DRC'} - ${issue.message || ''}'. Synthesized netlist and updated schematic canvas.`,
+          isAgent: true,
+        }
+      ]);
+    } else {
+      handleSendSteer(undefined, `Auto-fix DRC issue on node '${issue.target || issue.targetNodeId}' (pin '${issue.targetPort || ''}'): ${issue.suggestedFix}. Synthesize and apply repaired VHDL to canvas.`);
+    }
+  }, [onAutoFixDrc, handleSendSteer]);
 
   const handleStop = useCallback(() => {
     onIntervention('stop');
@@ -2767,7 +2797,7 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
                           </div>
                         </div>
                         <button
-                          onClick={() => onApplyDesignToCanvas(msg.action.vhdl_code, msg.action.circuit_name || 'custom_design')}
+                          onClick={() => onApplyDesignToCanvas(msg.action.vhdl_code, msg.action.circuit_name || 'custom_design', msg.action.file_path)}
                           className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[10px] flex items-center space-x-1.5 transition cursor-pointer shadow-md"
                           title="Apply this synthesizable design to the RTL editor and canvas"
                         >

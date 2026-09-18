@@ -26,6 +26,7 @@ import {
   readProjectFile,
   getProject,
   getProjectTree,
+  autoFixDrc,
 } from './services/api';
 import { evaluateCircuitLogic } from './utils/circuitSimulator';
 import { netlistToVHDL } from './utils/netlistToVHDL';
@@ -144,6 +145,7 @@ export function App() {
   const handleConsumeTargetOpenFilePath = useCallback(() => {
     setTargetOpenFilePath(undefined);
   }, []);
+  const [canvasDrcDiagnostics, setCanvasDrcDiagnostics] = useState<any[]>([]);
   const [incomingContextItem, setIncomingContextItem] = useState<{
     type: string;
     label: string;
@@ -901,6 +903,44 @@ end rtl;`);
     }
   };
 
+  const handleAutoFixDrc = async (diagnostics?: any[]) => {
+    try {
+      setSyncStatus('syncing');
+      const targetFile = currentActiveEditorFile || targetOpenFilePath || topFilePathRef.current || topFilePath || 'src/full_adder.vhd';
+      const res = await autoFixDrc(activeProjectId || undefined, targetFile, vhdlCode || undefined, selectedCircuit, diagnostics);
+      if (res && res.success) {
+        const newCode = res.repaired_code || res.vhdl_code;
+        if (newCode) {
+          setVhdlCode(newCode);
+          if (activeProjectId) {
+            await writeProjectFile(activeProjectId, targetFile, newCode).catch(() => {});
+          }
+        }
+        if (res.netlist) {
+          setNetlist(res.netlist);
+        }
+        setActiveFaults({});
+        setSyncStatus('synced');
+        setCodeEditorReloadVersion((v) => v + 1);
+
+        const repCount = res.repairs_applied?.length || 0;
+        setAgentLogs((prev) => [
+          ...prev,
+          {
+            time: Date.now(),
+            state: 'AUTO_FIX',
+            action: 'drc_repaired',
+            thought: `⚡ Auto-Fix Succeeded: Applied ${repCount} DRC correction(s) to project '${activeProjectId}'. All floating inputs tied, bus contention resolved, and netlist synchronized.`,
+            details: res,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error('Auto-Fix DRC failed', err);
+      setSyncStatus('error');
+    }
+  };
+
   const handleLaunchTask = (
     goal: string,
     scale: number,
@@ -949,24 +989,14 @@ end rtl;`);
 
   const syncNetlistToCode = (updatedNetlist: NetlistGraph) => {
     try {
-      // Only perform automatic canvas-to-VHDL overwrite for canonical gate-level starter files
-      const mapping: Record<string, string> = {
-        scale1_full_adder: 'src/full_adder.vhd',
-        scale2_counter: 'src/counter_8bit.vhd',
-        scale3_alu: 'src/alu_32bit.vhd',
-        scale4_riscv: 'src/riscv_rv32i.vhd',
-      };
-      const canonicalTop = mapping[activeProjectId];
-      if (!canonicalTop || (topFilePath && topFilePath !== canonicalTop)) {
-        // Do not overwrite secondary or structural subsystem files with gate-level serializer
-        return;
-      }
-
       const generated = netlistToVHDL(updatedNetlist);
       if (generated) {
         setVhdlCode(generated);
         setSyncStatus('synced');
-        writeProjectFile(activeProjectId, canonicalTop, generated).catch(() => {});
+        const targetFile = currentActiveEditorFile || topFilePathRef.current || topFilePath || 'src/full_adder.vhd';
+        if (activeProjectId) {
+          writeProjectFile(activeProjectId, targetFile, generated).catch(() => {});
+        }
       }
     } catch (err) {
       console.error('Failed to serialize netlist to VHDL', err);
@@ -1015,12 +1045,20 @@ end rtl;`);
   const handleDeleteComponent = (nodeId: string) => {
     setNetlist((currentNetlist) => {
       if (!currentNetlist) return currentNetlist;
-      const targetNode = currentNetlist.nodes.find((n) => n.id === nodeId || n.label === nodeId);
-      const targetIds = new Set([nodeId, targetNode?.id, targetNode?.label].filter(Boolean) as string[]);
+      const norm = (s: string = '') => s.toLowerCase().trim();
+      const targetNode = currentNetlist.nodes.find(
+        (n) => n.id === nodeId || n.label === nodeId || norm(n.id) === norm(nodeId) || norm(n.label) === norm(nodeId)
+      );
+      const targetIdSet = new Set(
+        [nodeId, targetNode?.id, targetNode?.label].filter(Boolean).map((s) => norm(s as string))
+      );
+
       const updatedNetlist = {
         ...currentNetlist,
-        nodes: currentNetlist.nodes.filter((n) => !targetIds.has(n.id) && !targetIds.has(n.label)),
-        wires: currentNetlist.wires.filter((w) => !targetIds.has(w.source_node) && !targetIds.has(w.target_node)),
+        nodes: currentNetlist.nodes.filter((n) => !targetIdSet.has(norm(n.id)) && !targetIdSet.has(norm(n.label))),
+        wires: currentNetlist.wires.filter(
+          (w) => !targetIdSet.has(norm(w.source_node)) && !targetIdSet.has(norm(w.target_node))
+        ),
       };
       const simState = evaluateCircuitLogic(updatedNetlist, probeValues, activeFaults);
       setProbeValues(simState.probeValues);
@@ -1119,6 +1157,9 @@ end rtl;`);
               agentState={agentState}
               isSimulating={isSimulating}
               onAgentIntervention={handleAgentIntervention}
+              onAutoFixDrc={handleAutoFixDrc}
+              onDrcDiagnosticsChange={setCanvasDrcDiagnostics}
+              canvasDrcDiagnostics={canvasDrcDiagnostics}
               onLaunchTask={handleLaunchTask}
               onAddComponent={handleAddComponent}
               onDeleteComponent={handleDeleteComponent}
@@ -1242,6 +1283,7 @@ end rtl;`);
               onIntervention={handleAgentIntervention}
               onLaunchTask={handleLaunchTask}
               onRunSimulation={handleRunSimulation}
+              onAutoFixDrc={handleAutoFixDrc}
               circuitContext={{
                 project_id: activeProjectId,
                 active_project_id: activeProjectId,
@@ -1267,7 +1309,7 @@ end rtl;`);
                     ? 'Embedded Platforms & MCUs'
                     : 'EDA Studio',
                 canvas_live_summary: `${netlist?.nodes.length || 0} gates, ${netlist?.wires.length || 0} nets, ${Object.keys(probeValues).length} active probes, ${Object.keys(activeFaults).length} injected faults. Simulation is ${isSimulating ? 'RUNNING' : 'IDLE'}.`,
-                drc_issues: lintMessages || [],
+                drc_issues: canvasDrcDiagnostics.length > 0 ? canvasDrcDiagnostics : (lintMessages || []),
                 simulation_summary: summary ? {
                   status: summary.assertions?.all_passed ? 'PASSED' : (summary.assertions?.failed ? 'FAILED' : 'COMPLETED'),
                   duration_ns: summary.total_time_ns || 100,
@@ -1283,12 +1325,18 @@ end rtl;`);
               activeProjectId={activeProjectId}
               incomingContextItem={incomingContextItem}
               onClearIncomingContext={() => setIncomingContextItem(null)}
-              onApplyDesignToCanvas={(code) => {
+              onApplyDesignToCanvas={(code, cName, filePath) => {
                 setVhdlCode(code);
                 handleSynthesizeVHDL(code);
-                if (activeProjectId && topFilePath) {
-                  writeProjectFile(activeProjectId, topFilePath, code)
-                    .then(() => setCodeEditorReloadVersion((v) => v + 1))
+                const targetFile = filePath || topFilePath;
+                if (activeProjectId && targetFile) {
+                  writeProjectFile(activeProjectId, targetFile, code)
+                    .then(() => {
+                      setCodeEditorReloadVersion((v) => v + 1);
+                      if (filePath) {
+                        setTargetOpenFilePath(filePath);
+                      }
+                    })
                     .catch(() => {});
                 }
               }}

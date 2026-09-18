@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -63,3 +63,11 @@ data/*.sqlite-journal
 # Scratch scripts
 scratch/
 
+# Ephemeral test projects
+projects/test_api_autofix/
+projects/test_autofix_proj/
+projects/test_neural_proj/
+projects/test_p/
+projects/test_proj/
+projects/test_nlp_*/
+projects/test_security_*/

@@ -9,7 +9,7 @@
   "scale": 3,
   "scale_label": "Scale 3: Espressif ESP32-S3",
   "description": "Espressif ESP32-S3 (Dual-core 32-bit Xtensa LX7 @ 240MHz + AI Vector Instructions) embedded system project",
-  "created_at": 1789701810.8165712,
-  "last_modified": 1789701810.8165712,
+  "created_at": 1789747610.6516783,
+  "last_modified": 1789747610.6516783,
   "top_file": "main/app_main.c"
 }

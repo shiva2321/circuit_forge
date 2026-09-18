@@ -63,6 +63,9 @@ export interface StudioWindowManagerProps {
   onDeleteComponent: (id: string) => void;
   onAddWire: (wire: NetlistWire) => void;
   onDeleteWire: (id: string) => void;
+  onAutoFixDrc?: (diagnostics?: any[]) => void;
+  onDrcDiagnosticsChange?: (diagnostics: any[]) => void;
+  canvasDrcDiagnostics?: any[];
 
   vhdlCode: string;
   onChangeCode: (newCode: string) => void;
@@ -124,6 +127,9 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   onDeleteComponent,
   onAddWire,
   onDeleteWire,
+  onAutoFixDrc,
+  onDrcDiagnosticsChange,
+  canvasDrcDiagnostics = [],
 
   vhdlCode,
   onChangeCode,
@@ -1017,6 +1023,8 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             }}
             onAddToAgentContext={handleAddToAgentContext}
             onClearCanvas={onClearCanvas}
+            onAutoFixDrc={onAutoFixDrc}
+            onDrcDiagnosticsChange={onDrcDiagnosticsChange}
           />
         );
       case 'editor':
@@ -1059,6 +1067,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             onClearLogs={onClearLogs}
             agentState={agentState}
             onIntervention={onAgentIntervention}
+            onAutoFixDrc={onAutoFixDrc}
             onLaunchTask={onLaunchTask}
             onRunSimulation={onRunSimulation}
             circuitContext={{
@@ -1075,7 +1084,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               active_tab: 'design',
               active_tab_label: 'Design & RTL Studio',
               canvas_live_summary: `${netlist?.nodes.length || 0} gates, ${netlist?.wires.length || 0} nets, ${Object.keys(probeValues).length} active probes, ${Object.keys(activeFaults).length} injected faults. Simulation is ${isSimulating ? 'RUNNING' : 'IDLE'}.`,
-              drc_issues: lintMessages || [],
+              drc_issues: (canvasDrcDiagnostics && canvasDrcDiagnostics.length > 0) ? canvasDrcDiagnostics : (lintMessages || []),
               simulation_summary: summary ? {
                 status: summary.assertions?.all_passed ? 'PASSED' : (summary.assertions?.failed ? 'FAILED' : 'COMPLETED'),
                 duration_ns: summary.total_time_ns || 100,
@@ -1093,12 +1102,13 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             currentSelection={agentContextSelection}
             incomingContextItem={incomingContextItem}
             onClearIncomingContext={() => setIncomingContextItem(null)}
-            onApplyDesignToCanvas={(code) => {
+            onApplyDesignToCanvas={(code, cName, filePath) => {
               handlePushVhdlHistory(vhdlCode);
               onChangeCode(code);
               onSynthesizeAndSimulate(code);
-              if (activeProjectId && topFilePath) {
-                writeProjectFile(activeProjectId, topFilePath, code).catch(() => {});
+              const targetFile = filePath || topFilePath;
+              if (activeProjectId && targetFile) {
+                writeProjectFile(activeProjectId, targetFile, code).catch(() => {});
               }
             }}
             onStopAgent={() => onAgentIntervention('stop')}

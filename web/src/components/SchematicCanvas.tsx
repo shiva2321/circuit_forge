@@ -67,6 +67,8 @@ export interface SchematicCanvasProps {
   onWireSelect?: (wireId: string | null, wireName?: string) => void;
   onAddToAgentContext?: (item: { type: 'node' | 'wire' | 'code_range' | 'file' | 'canvas_snapshot' | string; label: string; data: any }) => void;
   onClearCanvas?: () => void;
+  onAutoFixDrc?: (diagnostics?: any[]) => void;
+  onDrcDiagnosticsChange?: (diagnostics: SynthesisDiagnostic[]) => void;
 }
 
 export interface CanvasNotification {
@@ -227,6 +229,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   onWireSelect,
   onAddToAgentContext,
   onClearCanvas,
+  onAutoFixDrc,
+  onDrcDiagnosticsChange,
 }) => {
   const [zoom, setZoom] = useState<number>(() => {
     if (activeProjectId) {
@@ -542,7 +546,13 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           );
         });
 
-        if (!isDriven) {
+        const isTied = (pin as any).is_tied || (Array.isArray(n.properties?.bindings) && n.properties.bindings.some((b: any) => {
+          const formal = Array.isArray(b) ? b[0] : b?.formal;
+          const actual = String(Array.isArray(b) ? b[1] : b?.actual || '').trim().toLowerCase();
+          return (formal?.toLowerCase() === pName) && (/^('0'|'1'|"[01]+"|[0-9]+|gnd|vcc|false|true)$/i.test(actual));
+        }));
+
+        if (!isDriven && !isTied) {
           const alreadyLogged = list.some(
             (d) => (d.target_node === n.id || d.target_node === n.label) && (d.target_port === pin.name || d.target_port?.toLowerCase() === pName)
           );
@@ -566,12 +576,24 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     return list;
   }, [netlist]);
 
+  // Synchronize live canvas DRC diagnostics upward to the global agent context
+  useEffect(() => {
+    onDrcDiagnosticsChange?.(allDrcDiagnostics);
+  }, [allDrcDiagnostics, onDrcDiagnosticsChange]);
+
   // Check whether an input pin is floating / undriven
   const isInputPinUndriven = useCallback(
     (node: NetlistNode, pin: PortDef): boolean => {
       if (!netlist) return false;
       const pName = (pin.name || '').toLowerCase();
       if (pName === 'clk' || pName === 'clock' || pName === 'gnd' || pName === 'vcc') return false;
+
+      const isTied = (pin as any).is_tied || (Array.isArray(node.properties?.bindings) && node.properties.bindings.some((b: any) => {
+        const formal = Array.isArray(b) ? b[0] : b?.formal;
+        const actual = String(Array.isArray(b) ? b[1] : b?.actual || '').trim().toLowerCase();
+        return (formal?.toLowerCase() === pName) && (/^('0'|'1'|"[01]+"|[0-9]+|gnd|vcc|false|true)$/i.test(actual));
+      }));
+      if (isTied) return false;
 
       const isDriven = netlist.wires.some(
         (w) =>
@@ -5242,9 +5264,15 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                 </button>
               </div>
 
-              {allDrcDiagnostics.length > 0 && onAgentIntervention && (
+              {allDrcDiagnostics.length > 0 && (onAutoFixDrc || onAgentIntervention) && (
                 <button
-                  onClick={() => onAgentIntervention('steer', { guidance: 'Auto-fix all identified DRC errors and synthesize the clean circuit' })}
+                  onClick={() => {
+                    if (onAutoFixDrc) {
+                      onAutoFixDrc(allDrcDiagnostics);
+                    } else if (onAgentIntervention) {
+                      onAgentIntervention('steer', { guidance: 'Auto-fix all identified DRC errors and synthesize the clean circuit' });
+                    }
+                  }}
                   className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-[10px] flex items-center space-x-1.5 transition cursor-pointer shadow active:scale-95 flex-shrink-0"
                   title="Dispatch autonomous agent to repair floating pins, contention, and synthesize"
                 >

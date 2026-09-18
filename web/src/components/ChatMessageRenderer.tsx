@@ -26,7 +26,7 @@ interface ChatMessageRendererProps {
   state?: string;
   details?: any;
   action?: any;
-  onApplyDesignToCanvas?: (vhdlCode: string, circuitName: string) => void;
+  onApplyDesignToCanvas?: (vhdlCode: string, circuitName: string, filePath?: string) => void;
   onAutoFixAll?: () => void;
   onPermissionDecision?: (approved: boolean, details: any) => void;
   circuitName?: string;
@@ -131,7 +131,7 @@ export const ChatMessageRenderer: React.FC<ChatMessageRendererProps> = ({
             </button>
             {isSynthesizableVHDL && onApplyDesignToCanvas && (
               <button
-                onClick={() => onApplyDesignToCanvas(code, circuitName)}
+                onClick={() => onApplyDesignToCanvas(code, circuitName, (action && action.file_path) || (details && details.file_path))}
                 className="px-2.5 py-0.5 rounded bg-gradient-to-r from-teal-500 via-cyan-500 to-blue-600 hover:from-teal-400 hover:to-blue-500 text-white font-bold flex items-center space-x-1 transition cursor-pointer shadow-md active:scale-95"
                 title="Synthesize and apply this code directly to canvas"
               >
@@ -323,7 +323,7 @@ export const ChatMessageRenderer: React.FC<ChatMessageRendererProps> = ({
               onClick={() => {
                 setPermissionState('approved');
                 if (details.vhdl_code && onApplyDesignToCanvas) {
-                  onApplyDesignToCanvas(details.vhdl_code, details.circuit_name || circuitName);
+                  onApplyDesignToCanvas(details.vhdl_code, details.circuit_name || circuitName, details.file_path || (action && action.file_path));
                 }
                 onPermissionDecision?.(true, details);
               }}

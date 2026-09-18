@@ -1,0 +1,10 @@
+{
+  "id": "neuron",
+  "name": "neural_processor_top",
+  "scale": 3,
+  "scale_label": "Scale 3: Neural Subsystem",
+  "description": "32-Neuron parallel arithmetic array with ReLU activation, inter-array cascade chaining, and 4-digit multiplexed seven-segment display driver.",
+  "created_at": 1789702236.879947,
+  "last_modified": 1789704499.0570068,
+  "top_file": "src/neural_processor_top.vhd"
+}

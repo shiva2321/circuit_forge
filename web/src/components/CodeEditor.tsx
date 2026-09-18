@@ -727,31 +727,43 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadVersion]);
 
-  // Sync external code prop (from canvas→code direction)
-  // ONLY updates the designated top design file — NEVER overwrites testbenches, constraints, or other tabs!
+  // Sync external code prop (from canvas→code direction or auto-repair)
+  // Updates the designated top design file or active design file, ensuring Monaco & buffers stay synchronized
   useEffect(() => {
     if (!code || !code.trim()) return;
 
-    const currentTop = topFilePath || internalTopFilePath;
+    const normTop = normalizePath(topFilePath || internalTopFilePath || '');
+    const normActive = normalizePath(activeFilePath);
 
-    setFiles((prev) =>
-      prev.map((f) => {
-        const isTarget = currentTop
-          ? f.path === currentTop
-          : isDesignRtlFile(f.path) && f.path.includes('src/');
+    setFiles((prev) => {
+      const targetFound = prev.some(
+        (f) =>
+          (normTop && normalizePath(f.path) === normTop) ||
+          (normActive && normalizePath(f.path) === normActive && isDesignRtlFile(f.path))
+      );
+      if (!targetFound && (normTop || normActive)) {
+        const fallbackPath = normActive && isDesignRtlFile(normActive) ? normActive : normTop;
+        const name = fallbackPath.split('/').pop() || fallbackPath;
+        return [{ name, path: fallbackPath, code, isDirty: false }, ...prev];
+      }
+      return prev.map((f) => {
+        const normF = normalizePath(f.path);
+        const isTarget = normTop
+          ? normF === normTop || (normActive && normF === normActive && isDesignRtlFile(f.path))
+          : normActive && normF === normActive;
         if (isTarget) {
           return { ...f, code, isDirty: false };
         }
         return f;
-      })
-    );
+      });
+    });
 
-    // Only update Monaco editor if the user is currently viewing the top design file!
-    const isViewingTop = currentTop
-      ? activeFilePath === currentTop
-      : isDesignRtlFile(activeFilePath) && activeFilePath.includes('src/');
+    // Only update Monaco editor if the user is currently viewing the top design file or active RTL file!
+    const isViewingTarget = normTop
+      ? normActive === normTop || isDesignRtlFile(activeFilePath)
+      : isDesignRtlFile(activeFilePath);
 
-    if (isViewingTop && editorRef.current && editorRef.current.getValue() !== code) {
+    if (isViewingTarget && editorRef.current && editorRef.current.getValue() !== code) {
       const pos = editorRef.current.getPosition();
       isProgrammaticUpdateRef.current = true;
       editorRef.current.setValue(code);

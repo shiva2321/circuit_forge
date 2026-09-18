@@ -721,6 +721,7 @@ class OpenRouterClient:
         model: Optional[str] = None,
         tools_instance: Optional[Any] = None,
         project_id: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Interactive hardware engineering chat with autonomous tool execution.
@@ -737,6 +738,7 @@ class OpenRouterClient:
         probes = ctx.get("probes", {})
         faults = ctx.get("faults", {})
         proj_id = project_id or (ctx.get("project_id") if ctx else None) or (ctx.get("active_project_id") if ctx else None) or "scale1_full_adder"
+        active_file = ctx.get("active_file") or ctx.get("file_path") or "src/top.vhd"
 
         # ── 1. Autonomous Frontier Tool Calling Loop (If API Key Available) ───────
         if key and len(key) > 10:
@@ -796,10 +798,25 @@ class OpenRouterClient:
                 "Content-Type": "application/json"
             }
 
-            messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
-            ]
+            messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+
+            # Add multi-turn chat history if available
+            effective_history = chat_history or ctx.get("chat_history") or []
+            if effective_history and isinstance(effective_history, list):
+                for item in effective_history[-15:]:
+                    if not isinstance(item, dict):
+                        continue
+                    role = item.get("role")
+                    if not role:
+                        role = "assistant" if item.get("isAgent") or item.get("is_agent") else "user"
+                    txt = item.get("content") or item.get("text") or item.get("agentThought") or ""
+                    if isinstance(txt, str) and txt.strip():
+                        clean_txt = sanitize_credentials(txt.strip())
+                        if len(clean_txt) > 2500:
+                            clean_txt = clean_txt[:2500] + "... [earlier context]"
+                        messages.append({"role": role, "content": clean_txt})
+
+            messages.append({"role": "user", "content": message})
 
             tools_schema = tools_instance.get_tool_definitions() if tools_instance else None
             tool_history: List[Dict[str, Any]] = []
@@ -1098,7 +1115,9 @@ class OpenRouterClient:
                 repair_res = tools_instance.execute_tool("eda_repair_and_synthesize", {
                     "circuit_name": target_circuit,
                     "vhdl_code": vhdl_code,
-                    "project_id": proj_id
+                    "issues": ctx.get("drc_issues") or ctx.get("drc_violations"),
+                    "project_id": proj_id,
+                    "target_file": active_file
                 })
                 tool_history.append({"tool": "eda_repair_and_synthesize", "result": repair_res})
 
@@ -1140,6 +1159,7 @@ class OpenRouterClient:
                     "type": "apply_code",
                     "vhdl_code": repaired_code,
                     "circuit_name": target_circuit,
+                    "file_path": active_file,
                     "repaired": True
                 }
 
@@ -1623,125 +1643,119 @@ class OpenRouterClient:
         except Exception:
             mental_map = {}
 
-        # ── A0. Hardware Synthesis / Build / Design / Demo Intent ───────────
-        if any(k in msg_lower for k in ("build", "design", "create", "make", "demo", "useful", "dsp", "mac", "pipeline", "accelerator", "multiplier")):
-            from backend.app.agent.hardware_generator import clean_hardware_name
-            clean_ent = clean_hardware_name(message, default="dsp_mac_pipeline")
-            vhdl_code = f"""library IEEE;
-use IEEE.STD_LOGIC_1164.ALL;
-use IEEE.NUMERIC_STD.ALL;
+        # ── A. Component Attachment / LED / Probe / Invert / Modify Intent ──
+        if any(k in msg_lower for k in ("add led", "connect led", "attach led", "wire led", "led to", "led on", "probe on", "probe to", "add probe", "connect probe", "indicator", "monitor", "invert", "not gate to")):
+            from backend.app.agent.hardware_generator import modify_existing_hardware
+            target_code = vhdl_code
+            if not target_code and proj_id:
+                try:
+                    f = project_mgr.read_file(proj_id, active_file)
+                    target_code = f.get("content", "")
+                except Exception:
+                    pass
 
-entity {clean_ent} is
-    Port (
-        clk       : in  STD_LOGIC;
-        rst       : in  STD_LOGIC;
-        valid_in  : in  STD_LOGIC;
-        clr_acc   : in  STD_LOGIC;
-        a_in      : in  STD_LOGIC_VECTOR(7 downto 0);
-        b_in      : in  STD_LOGIC_VECTOR(7 downto 0);
-        accum_out : out STD_LOGIC_VECTOR(15 downto 0);
-        overflow  : out STD_LOGIC;
-        valid_out : out STD_LOGIC
-    );
-end {clean_ent};
+            mod_res = modify_existing_hardware(target_code or "", message)
+            if mod_res.get("modified"):
+                updated_vhdl = mod_res["vhdl_code"]
+                explanation = mod_res.get("explanation", "Modified hardware architecture.")
+                
+                # Synthesize netlist
+                if tools_instance:
+                    synth_res = tools_instance.execute_tool("eda_synthesize_netlist", {
+                        "circuit_name": circuit_name,
+                        "vhdl_code": updated_vhdl
+                    })
+                    tool_history.append({"tool": "eda_synthesize_netlist", "result": synth_res})
 
-architecture rtl of {clean_ent} is
-    signal p_reg : signed(15 downto 0) := (others => '0');
-    signal a_reg : signed(16 downto 0) := (others => '0');
-    signal v_reg : STD_LOGIC := '0';
-begin
-    -- Pipelined DSP Multiply-Accumulate Accelerator
-    process(clk, rst)
-    begin
-        if rst = '1' then
-            p_reg <= (others => '0');
-            a_reg <= (others => '0');
-            v_reg <= '0';
-        elsif rising_edge(clk) then
-            v_reg <= valid_in;
-            if valid_in = '1' then
-                p_reg <= signed(a_in) * signed(b_in);
-            end if;
-            if clr_acc = '1' then
-                a_reg <= (others => '0');
-            elsif v_reg = '1' then
-                a_reg <= a_reg + resize(p_reg, 17);
-            end if;
-        end if;
-    end process;
+                reply = (
+                    f"### ✨ Hardware Modification Applied: `{circuit_name}`\n\n"
+                    f"{explanation}\n\n"
+                    f"- **Target File**: `{active_file}`\n"
+                    f"- **Synthesizable RTL Updated**:\n\n"
+                    f"```vhdl\n{updated_vhdl}\n```\n"
+                    f"The updated code and schematic netlist are synchronized."
+                )
+                action = {
+                    "type": "apply_code",
+                    "vhdl_code": updated_vhdl,
+                    "circuit_name": circuit_name,
+                    "file_path": active_file,
+                    "goal": message.strip()
+                }
+                return {"success": True, "model": "CircuitForge Cognitive Copilot", "reply": reply, "action": action, "tool_history": tool_history, "is_llm": False}
 
-    accum_out <= std_logic_vector(a_reg(15 downto 0));
-    overflow  <= a_reg(16) xor a_reg(15);
-    valid_out <= v_reg;
-end rtl;
-"""
+        # ── B. Parametric Hardware Synthesis Intent (Gate, MUX, Adder, Counter, ALU, RISC-V, Neural, DSP) ──
+        if any(k in msg_lower for k in ("build", "design", "create", "make", "synthesize", "generate", "mux", "multiplexer", "counter", "adder", "alu", "inverter", "gate", "flip flop", "dff", "dsp", "mac", "pipeline", "accelerator")):
+            from backend.app.agent.hardware_generator import generate_hardware_from_prompt, materialize_design_into_project
+            hw_suite = generate_hardware_from_prompt(message, context=ctx, project_id=proj_id)
+            c_name = hw_suite.get("circuit_name", "custom_circuit")
+            top_code = hw_suite.get("vhdl_code", "")
+            top_file = hw_suite.get("top_file", f"src/{c_name}.vhd")
+            desc = hw_suite.get("description", "Synthesizable VHDL hardware architecture.")
+            scale_lvl = hw_suite.get("scale", 1)
+
+            # Materialize into project files if multi-file suite
+            if "files" in hw_suite and len(hw_suite["files"]) > 1:
+                materialize_design_into_project(proj_id, hw_suite)
+                await global_bus.broadcast({
+                    "type": "project_files_updated",
+                    "data": {
+                        "project_id": proj_id,
+                        "files": list(hw_suite["files"].keys()),
+                        "top_file": top_file,
+                        "circuit_name": c_name,
+                        "scale": scale_lvl
+                    }
+                })
+            elif tools_instance:
+                # Write the top-level file
+                tools_instance.execute_tool("fs_write_file", {
+                    "project_id": proj_id,
+                    "path": top_file,
+                    "content": top_code
+                })
+
+            # Synthesize netlist
+            if tools_instance:
+                synth_res = tools_instance.execute_tool("eda_synthesize_netlist", {
+                    "circuit_name": c_name,
+                    "vhdl_code": top_code
+                })
+                tool_history.append({"tool": "eda_synthesize_netlist", "result": synth_res})
+
+            await global_bus.broadcast({
+                "type": "circuit_designed",
+                "data": {
+                    "circuit_name": c_name,
+                    "scale": scale_lvl,
+                    "vhdl_code": top_code,
+                    "kg_node_id": f"design:{c_name}"
+                }
+            })
+
             reply = (
-                f"### 🚀 Synthesized Pipelined DSP Hardware Accelerator (`{clean_ent}`)\n\n"
-                f"I have designed, linted, and verified a production-grade **Multiply-Accumulate (MAC) DSP pipeline**:\n\n"
-                f"- **Architecture**: 8-bit signed two's-complement multiplier stage feeding a 16-bit accumulator register.\n"
-                f"- **Pipelining**: Single-cycle registered multiplication with valid/ready streaming control (`valid_in` ➔ `valid_out`).\n"
-                f"- **Safety Features**: Synchronous reset (`rst`), dynamic accumulator flush (`clr_acc`), and saturation/overflow telemetry (`overflow`).\n\n"
-                f"```vhdl\n{vhdl_code}\n```\n"
-                f"Netlist is synthesized and applied to your Monaco editor, schematic canvas, and cycle simulation."
+                f"### 🚀 Synthesized Hardware Architecture: `{c_name}` (Scale {scale_lvl})\n\n"
+                f"{desc}\n\n"
+                f"- **Top-Level File**: `{top_file}`\n"
+                f"- **Target Project**: `{proj_id}`\n\n"
+                f"```vhdl\n{top_code}\n```\n"
+                f"Netlist is synthesized and synchronized to your Monaco editor and schematic canvas."
             )
             action = {
                 "type": "apply_code",
-                "vhdl_code": vhdl_code,
-                "circuit_name": clean_ent,
+                "vhdl_code": top_code,
+                "circuit_name": c_name,
+                "file_path": top_file,
                 "goal": message.strip()
             }
             return {
                 "success": True,
-                "model": "CircuitForge Hardware Engine",
+                "model": "CircuitForge Hardware Synthesizer",
                 "reply": reply,
                 "action": action,
                 "tool_history": tool_history,
                 "is_llm": False
             }
-
-        # ── A. Component Attachment / LED / Probe / Indicator Intent ────────
-        elif any(k in msg_lower for k in ("add led", "connect led", "attach led", "wire led", "led to", "led on", "probe on", "probe to", "add probe", "connect probe", "indicator", "monitor")):
-            target_port = "Cout" if "cout" in msg_lower else "Sum" if "sum" in msg_lower else "Cin" if "cin" in msg_lower else "Cout"
-            comp_type = "LED" if "led" in msg_lower else "PROBE"
-
-            updated_vhdl = f"""library IEEE;
-use IEEE.STD_LOGIC_1164.ALL;
-
-entity full_adder is
-    Port (
-        A        : in  STD_LOGIC;
-        B        : in  STD_LOGIC;
-        Cin      : in  STD_LOGIC;
-        Sum      : out STD_LOGIC;
-        Cout     : out STD_LOGIC;
-        {comp_type}_{target_port} : out STD_LOGIC
-    );
-end full_adder;
-
-architecture Structural of full_adder is
-    signal s1 : STD_LOGIC;
-    signal c1 : STD_LOGIC;
-    signal c2 : STD_LOGIC;
-begin
-    s1 <= A xor B;
-    Sum <= s1 xor Cin;
-    c1 <= A and B;
-    c2 <= s1 and Cin;
-    Cout <= c1 or c2;
-    {comp_type}_{target_port} <= {'c1 or c2' if target_port == 'Cout' else 's1 xor Cin'}; -- Live telemetry monitor
-end Structural;
-"""
-            reply = (
-                f"### ✨ Hardware Modification Applied: Connected `{comp_type}` to `{target_port}`\n\n"
-                f"I have analyzed the circuit topology using the live **Cognitive Mental Map** and updated the hardware architecture:\n"
-                f"- **Component Added**: `{comp_type}` Indicator (`{comp_type}_{target_port}`)\n"
-                f"- **Tapped Signal**: `{target_port}` ({'Carry-Out overflow monitor' if target_port == 'Cout' else 'Sum bit monitor'})\n"
-                f"- **Synchronized RTL**: Declared `{comp_type}_{target_port} : out STD_LOGIC` in the entity and tied it directly to the stage output.\n\n"
-                f"```vhdl\n{updated_vhdl}\n```\n"
-                f"The updated code is ready to synchronize directly into your editor and canvas."
-            )
-            action = {"type": "apply_code", "vhdl_code": updated_vhdl, "circuit_name": circuit_name, "component": comp_type, "target": target_port}
-            return {"success": True, "model": "CircuitForge Cognitive Copilot", "reply": reply, "action": action, "tool_history": tool_history, "is_llm": False}
 
         # ── B. Circuit Optimization & Critical Path Reduction Intent ───────
         elif any(k in msg_lower for k in ("optimize", "speed up", "improve delay", "critical path", "cla", "carry lookahead", "faster")):
@@ -1822,11 +1836,15 @@ end Behavioral;
 
         # ── D. Specific Hardware Topics (Multiplexer, ALU, Decoder) ─────────
         elif "mux" in msg_lower or "multiplexer" in msg_lower:
+            from backend.app.agent.hardware_generator import generate_multiplexer
+            mux_suite = generate_multiplexer(4, "mux_4to1")
+            vhdl = mux_suite["vhdl_code"]
             reply = (
-                "A **Multiplexer** selects binary information from one of many input lines and directs it to a single output line. "
-                "A 2^n to 1 multiplexer requires n select lines. For a 4-to-1 MUX, select lines `sel(1 downto 0)` route `d0`, `d1`, `d2`, or `d3` to output `y`."
+                f"### 🔀 4-to-1 Multiplexer Synthesized\n\n"
+                f"{mux_suite['description']}\n\n"
+                f"```vhdl\n{vhdl}\n```"
             )
-            action = {"type": "design", "goal": "Design a 4-to-1 Multiplexer with enable"}
+            action = {"type": "apply_code", "vhdl_code": vhdl, "circuit_name": "mux_4to1", "file_path": "src/mux_4to1.vhd"}
             return {"success": True, "model": "CircuitForge Hardware Engine", "reply": reply, "action": action, "tool_history": tool_history, "is_llm": False}
 
         # ── E0. System Location & Omnipresent Cross-Tab Context Intent ──────

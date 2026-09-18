@@ -123,6 +123,14 @@ class AgentChatRequest(BaseModel):
     openrouter_key: Optional[str] = None
     model: Optional[str] = None
     project_id: Optional[str] = None
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+class AgentAutoFixRequest(BaseModel):
+    project_id: Optional[str] = None
+    target_file: Optional[str] = None
+    vhdl_code: Optional[str] = None
+    circuit_name: Optional[str] = None
+    issues: Optional[List[Any]] = None
 
 class ToolExecuteRequest(BaseModel):
     tool_name: str
@@ -427,7 +435,8 @@ async def chat_with_agent(req: AgentChatRequest):
         api_key=key,
         model=model,
         tools_instance=tools,
-        project_id=req.project_id
+        project_id=req.project_id,
+        chat_history=req.chat_history
     )
 
     clean_reply = sanitize_credentials(res.get("reply", ""))
@@ -461,7 +470,7 @@ async def chat_with_agent(req: AgentChatRequest):
             "data": sim_res
         })
 
-    # If action is apply_code, automatically write to active project on disk
+    # If action is apply_code, automatically write to active project on disk and broadcast live updates
     if action and action.get("type") in ("apply_code", "synthesize") and action.get("vhdl_code"):
         c_code = action["vhdl_code"]
         c_name = action.get("circuit_name") or (req.circuit_context or {}).get("circuit_name", "circuit_top")
@@ -469,6 +478,28 @@ async def chat_with_agent(req: AgentChatRequest):
         target_path = action.get("file_path") or f"src/{c_name}.vhd"
         try:
             project_mgr.write_file(target_pid, target_path, c_code)
+
+            # Synthesize netlist so schematic canvas updates immediately
+            try:
+                synth_nl = VHDLParser.synthesize_from_vhdl(c_code)
+                await global_bus.broadcast({
+                    "type": "netlist_synthesized",
+                    "timestamp": time.time(),
+                    "data": synth_nl
+                })
+            except Exception:
+                pass
+
+            await global_bus.broadcast({
+                "type": "circuit_designed",
+                "timestamp": time.time(),
+                "data": {
+                    "vhdl_code": c_code,
+                    "circuit_name": c_name,
+                    "file_path": target_path
+                }
+            })
+
             await global_bus.broadcast({
                 "type": "project_files_updated",
                 "timestamp": time.time(),
@@ -534,7 +565,32 @@ async def agent_intervention(req: AgentInterventionRequest):
     elif action == "steer":
         if req.guidance:
             agent.steer(req.guidance)
+            if any(kw in req.guidance.lower() for kw in ("auto-fix", "autofix", "repair all", "fix all", "floating cmos")):
+                fix_res = tools.auto_fix_drc()
+                if fix_res.get("success") and fix_res.get("netlist"):
+                    await global_bus.broadcast({
+                        "type": "netlist_synthesized",
+                        "data": fix_res["netlist"]
+                    })
+                    return {"status": "Auto-fix applied", "guidance": req.guidance, "result": fix_res}
         return {"status": "Guidance applied", "guidance": req.guidance}
+    elif action in ("autofix", "auto_fix", "repair"):
+        fix_res = tools.auto_fix_drc()
+        if fix_res.get("success"):
+            if fix_res.get("netlist"):
+                await global_bus.broadcast({
+                    "type": "netlist_synthesized",
+                    "data": fix_res["netlist"]
+                })
+            if fix_res.get("vhdl_code"):
+                await global_bus.broadcast({
+                    "type": "circuit_designed",
+                    "data": {
+                        "vhdl_code": fix_res["vhdl_code"],
+                        "circuit_name": fix_res.get("circuit_name", "repaired_circuit")
+                    }
+                })
+        return {"status": "Auto-fix completed", "result": fix_res}
     elif action == "fault":
         if req.net_name:
             res = tools.inject_fault(req.net_name, req.fault_value)
@@ -546,6 +602,47 @@ async def agent_intervention(req: AgentInterventionRequest):
             return res
         return {"error": "Missing net_name"}
     return {"error": f"Unknown action {action}"}
+
+@app.post("/api/agent/auto-fix")
+async def auto_fix_circuit(req: AgentAutoFixRequest):
+    """
+    Direct 1-Click DRC Auto-Repair:
+    Ties floating CMOS input pins to safe logic rails ('0' or '1'),
+    resolves bus contention, clears injected faults, updates project files,
+    and returns a clean, synthesized netlist.
+    """
+    res = tools.auto_fix_drc(
+        project_id=req.project_id,
+        target_file=req.target_file,
+        vhdl_code=req.vhdl_code,
+        circuit_name=req.circuit_name,
+        issues=req.issues
+    )
+    if res.get("success"):
+        if res.get("netlist"):
+            await global_bus.broadcast({
+                "type": "netlist_synthesized",
+                "data": res["netlist"]
+            })
+        if res.get("vhdl_code"):
+            await global_bus.broadcast({
+                "type": "circuit_designed",
+                "data": {
+                    "vhdl_code": res["vhdl_code"],
+                    "circuit_name": res.get("circuit_name", "repaired_circuit")
+                }
+            })
+        await global_bus.broadcast({
+            "type": "agent_thought",
+            "data": {
+                "time": int(time.time() * 1000),
+                "state": "AUTO_FIX",
+                "action": "drc_repaired",
+                "thought": f"⚡ Auto-Fix Complete: {len(res.get('repairs_applied', []))} DRC corrections applied. Netlist clean.",
+                "details": res
+            }
+        })
+    return res
 
 
 # ==========================================

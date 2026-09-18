@@ -286,17 +286,25 @@ class VHDLParser:
 
         # 1. Missing Connection / Undriven Input Pin Check (DRC-E101)
         for node in nodes:
+            if getattr(node, 'type', '') == 'TIE_CELL':
+                continue
             node_incoming = [w for w in wires if w.target_node == node.id]
+            node_bindings = {b[0].lower(): b[1].strip() for b in node.properties.get("bindings", [])} if hasattr(node, 'properties') and isinstance(node.properties, dict) else {}
             for pin in node.inputs:
+                pin_name_l = pin.name.lower()
+                pin_tied = getattr(pin, 'is_tied', False) or (pin_name_l in node_bindings and bool(re.match(r"^('0'|'1'|\"[01]+\"|[0-9]+|gnd|vcc|false|true)$", node_bindings[pin_name_l], re.IGNORECASE)))
+                if pin_tied:
+                    continue
+
                 pin_connected = any(
-                    w.target_port.lower() in (pin.id.lower(), pin.name.lower(), f"in_{pin.name.lower()}")
+                    w.target_port.lower() in (pin.id.lower(), pin.name.lower(), f"in_{pin_name_l}")
                     for w in node_incoming
                 )
                 if not pin_connected:
                     diag = {
                         "code": "DRC-E101",
                         "severity": "error",
-                        "title": f"Undriven Input Pin ({node.label} ➔ {pin.name})",
+                        "title": f"Undriven Input Pin ({node.label} -> {pin.name})",
                         "message": f"Input terminal '{pin.name}' on '{node.label}' is floating with no driving wire connection.",
                         "hardware_consequence": "Floating CMOS inputs drift to an indeterminate threshold (~VDD/2), partially turning ON both NMOS and PMOS channels. This causes crowbar shoot-through current, severe static leakage, thermal runaway, and unpredictable floating gate output oscillations.",
                         "target_node": node.id,
@@ -385,7 +393,7 @@ class VHDLParser:
                     diag = {
                         "code": "DRC-W201",
                         "severity": "warning",
-                        "title": f"Unconnected Output ({node.label} ➔ {pin.name})",
+                        "title": f"Unconnected Output ({node.label} -> {pin.name})",
                         "message": f"Output pin '{pin.name}' on '{node.label}' has no downstream connections or fanout loads.",
                         "hardware_consequence": "The gate transitions and consumes dynamic switching power (C*V^2*f), but its computed logic state is never observed or routed. EDA synthesis tools will prune and optimize away this dead logic.",
                         "target_node": node.id,
@@ -408,7 +416,14 @@ class VHDLParser:
             primary_inputs = [PortDef("in_a", "A", "in", 1), PortDef("in_b", "B", "in", 1)]
             primary_outputs = [PortDef("out_y", "Y", "out", 1)]
         else:
-            entity = parse_res.entities[0]
+            matched_entity = None
+            if circuit_name:
+                matched_entity = next((e for e in parse_res.entities if e.name.lower() == circuit_name.lower()), None)
+            if not matched_entity:
+                # If multiple entities and no exact match, pick the top entity (typically last or one with struct/top in name)
+                top_candidates = [e for e in parse_res.entities if any(kw in e.name.lower() for kw in ("top", "main", "core", "system", "processor"))]
+                matched_entity = top_candidates[0] if top_candidates else parse_res.entities[-1]
+            entity = matched_entity
             entity_name = entity.name
             primary_inputs = [
                 PortDef(f"in_{p.name}", p.name, "in", p.width, p.type_name)
@@ -421,14 +436,19 @@ class VHDLParser:
 
         # Extract architecture body
         clean_text = re.sub(r'--.*', '', vhdl_text)
-        arch_match = re.search(
-            r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)*)\s+is\s*(.*?)\s*begin\s*(.*?)\s*end(?:\s+architecture)?(?:\s+(?!if\b|case\b|process\b|loop\b|generate\b|record\b|component\b|for\b)[a-zA-Z0-9_\-]+)?\s*;',
-            clean_text,
-            re.DOTALL | re.IGNORECASE
-        )
+        arch_pattern = rf'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+({re.escape(entity_name)})\s+is\s*(.*?)\s*begin\s*(.*?)\s*end(?:\s+architecture)?(?:\s+(?!if\b|case\b|process\b|loop\b|generate\b|record\b|component\b|for\b)[a-zA-Z0-9_\-]+)?\s*;'
+        arch_match = re.search(arch_pattern, clean_text, re.DOTALL | re.IGNORECASE)
+        if not arch_match:
+            arch_match = re.search(rf'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+({re.escape(entity_name)})\s+is\s*(.*?)\s*begin\s*(.*)\s*end', clean_text, re.DOTALL | re.IGNORECASE)
         if not arch_match:
             arch_match = re.search(
-                r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)*)\s+is\s*(.*?)\s*begin\s*(.*)\s*end',
+                r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+)\s+is\s*(.*?)\s*begin\s*(.*?)\s*end(?:\s+architecture)?(?:\s+(?!if\b|case\b|process\b|loop\b|generate\b|record\b|component\b|for\b)[a-zA-Z0-9_\-]+)?\s*;',
+                clean_text,
+                re.DOTALL | re.IGNORECASE
+            )
+        if not arch_match:
+            arch_match = re.search(
+                r'architecture\s+([a-zA-Z0-9_\-]+)\s+of\s+([a-zA-Z0-9_\-]+)\s+is\s*(.*?)\s*begin\s*(.*)\s*end',
                 clean_text,
                 re.DOTALL | re.IGNORECASE
             )
@@ -553,7 +573,7 @@ class VHDLParser:
             # Parse declared components in architecture header if any
             arch_header = arch_match.group(3) if arch_match else ""
             comp_decl_pattern = re.compile(
-                r'component\s+([a-zA-Z0-9_]+)\s+(?:is\s+)?port\s*\((.*?)\)\s*;\s*end\s+component',
+                r'component\s+([a-zA-Z0-9_]+)\s+(?:is\s+)?port\s*\((.*?)\)\s*;\s*end\s+component(?:\s+[a-zA-Z0-9_]+)?\s*;?',
                 re.DOTALL | re.IGNORECASE
             )
             for c_name, c_ports_raw in comp_decl_pattern.findall(arch_header):
@@ -591,6 +611,7 @@ class VHDLParser:
 
                     actual_clean = actual.strip()
                     is_open_port = actual_clean.lower() == "open"
+                    is_const_tie = bool(re.match(r"^('0'|'1'|\"[01]+\"|[0-9]+|gnd|vcc|false|true)$", actual_clean, re.IGNORECASE))
                     actual_base = re.sub(r'\(.*?\)', '', actual_clean).strip().lower()
 
                     if is_out:
@@ -601,7 +622,11 @@ class VHDLParser:
                         if actual_base and not is_open_port:
                             signal_producers[actual_base] = (node_id_c, f"out_{formal}", formal, 64)
                     else:
-                        in_ports_c.append(PortDef(f"in_{formal}", formal, "in", 64))
+                        inp = PortDef(f"in_{formal}", formal, "in", 64)
+                        if is_const_tie:
+                            setattr(inp, 'is_tied', True)
+                            setattr(inp, 'tie_value', actual_clean)
+                        in_ports_c.append(inp)
 
                 if not in_ports_c:
                     in_ports_c = [PortDef("in_clk", "clk", "in", 1), PortDef("in_rst", "rst", "in", 1)]
@@ -728,8 +753,43 @@ class VHDLParser:
                             actual_base = re.sub(r'\(.*?\)', '', actual_clean).strip().lower()
                             is_input = any(ip.name.lower() == formal_l for ip in cn.inputs)
 
+                            is_const_tie = bool(re.match(r"^('0'|'1'|\"[01]+\"|[0-9]+|gnd|vcc|false|true)$", actual_clean, re.IGNORECASE))
                             if is_input:
-                                if actual_base in signal_producers:
+                                if is_const_tie:
+                                    tie_val_clean = actual_clean.strip('\'"')
+                                    is_low = tie_val_clean in ("0", "gnd", "false")
+                                    tie_label = f"TIE ('0' GND)" if is_low else f"TIE ('1' VCC)"
+                                    tie_node_id = f"node_tie_{cn.id}_{formal_l}"
+                                    if not any(n.id == tie_node_id for n in nodes):
+                                        tie_node = NetlistNode(
+                                            id=tie_node_id,
+                                            label=tie_label,
+                                            type="TIE_CELL",
+                                            scale=1,
+                                            x=max(40, cn.x - 140),
+                                            y=cn.y + (wire_id_ctr % 6) * 35,
+                                            width=100,
+                                            height=38,
+                                            inputs=[],
+                                            outputs=[PortDef(f"out_tie_{formal_l}", "tie_out", "out", 1)],
+                                            properties={"tie_value": actual_clean, "target_node": cn.id, "target_port": formal},
+                                            source_file=cn.source_file,
+                                            source_module=cn.source_module,
+                                            color_group="TIE"
+                                        )
+                                        nodes.append(tie_node)
+                                        wires.append(NetlistWire(
+                                            id=f"w_tie_{wire_id_ctr}",
+                                            source_node=tie_node_id,
+                                            source_port=f"out_tie_{formal_l}",
+                                            target_node=cn.id,
+                                            target_port=f"in_{formal}",
+                                            width=1,
+                                            label=actual_clean,
+                                            source_file=cn.source_file
+                                        ))
+                                        wire_id_ctr += 1
+                                elif actual_base in signal_producers:
                                     src_node, src_port, _, _ = signal_producers[actual_base]
                                     wires.append(NetlistWire(
                                         id=f"w_comp_{wire_id_ctr}",
@@ -1012,6 +1072,26 @@ class VHDLParser:
                         ))
 
                     node_idx += 1
+
+                # Second pass: route any inter-node wires across all generated nodes
+                for n_target in nodes:
+                    for ip in n_target.inputs:
+                        if not any(w.target_node == n_target.id and (w.target_port == ip.id or w.target_port == f"in_{ip.name.lower()}") for w in wires):
+                            op = ip.name.lower()
+                            # Match producer node whose output or target_signal matches op
+                            prev_node = next((n for n in nodes if n.id != n_target.id and (any(out_p.name.lower() == op for out_p in n.outputs) or n.properties.get("target_signal", "").lower() == op)), None)
+                            if prev_node:
+                                src_port = prev_node.outputs[0].id if prev_node.outputs else "out_0"
+                                wires.append(NetlistWire(
+                                    id=f"w_{prev_node.id}_{n_target.id}_{op}",
+                                    source_node=prev_node.id,
+                                    source_port=src_port,
+                                    target_node=n_target.id,
+                                    target_port=ip.id,
+                                    width=1,
+                                    label=op,
+                                    source_file=f"{entity_name}.vhd"
+                                ))
 
         if not nodes:
             block_h = max(120, len(primary_inputs) * 40)

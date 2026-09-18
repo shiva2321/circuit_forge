@@ -1,4 +1,13 @@
-# ⚡ CircuitForge EDA Studio
+import os
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DOCS_DIR = os.path.join(BASE_DIR, "docs")
+os.makedirs(DOCS_DIR, exist_ok=True)
+
+# -------------------------------------------------------------
+# 1. README.md
+# -------------------------------------------------------------
+readme_content = """# ⚡ CircuitForge EDA Studio
 
 <p align="center">
   <img src="https://img.shields.io/badge/build-passing-brightgreen?style=flat-square" height="20" alt="" />&nbsp;
@@ -14,15 +23,15 @@
   <strong>Autonomous & Interactive Multi-Scale Circuit EDA Studio, Logic Simulation Environment, and Embedded Firmware Co-Pilot</strong>
 </p>
 
-<p align="center">
-  <a href="#-quick-start">Getting Started</a> •
-  <a href="#-visual-tour">Visual Tour</a> •
-  <a href="#-multi-scale-hardware-hierarchy">Hardware Hierarchy</a> •
-  <a href="#-key-features">Key Features</a> •
-  <a href="#-system-architecture">System Architecture</a> •
-  <a href="#-api-reference">API Reference</a> •
-  <a href="#-documentation-index">Documentation</a>
-</p>
+[Getting Started](#-quick-start) •
+[Visual Tour](#-visual-tour) •
+[Hardware Hierarchy](#-multi-scale-hardware-hierarchy) •
+[Key Features](#-key-features) •
+[System Architecture](#-system-architecture) •
+[API Reference](#-api-reference) •
+[Documentation](#-documentation-index)
+
+</div>
 
 ---
 
@@ -246,3 +255,8 @@ For in-depth guides, architectural deep-dives, and security protocols, refer to:
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+"""
+
+with open(os.path.join(BASE_DIR, "README.md"), "w", encoding="utf-8") as f:
+    f.write(readme_content.strip() + "\n")
+print("Wrote README.md successfully.")

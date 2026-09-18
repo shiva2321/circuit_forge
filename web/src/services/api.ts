@@ -153,6 +153,37 @@ export async function sendAgentIntervention(
   return res.json();
 }
 
+export async function autoFixDrc(
+  projectId?: string,
+  targetFile?: string,
+  vhdlCode?: string,
+  circuitName?: string,
+  issues?: any[]
+): Promise<{
+  success: boolean;
+  circuit_name: string;
+  vhdl_code: string;
+  repaired_code?: string;
+  repaired_issues_count?: number;
+  netlist: any;
+  repairs_applied: string[];
+  drc_status: string;
+  active_faults_cleared: boolean;
+}> {
+  const res = await fetch(`${API_BASE}/agent/auto-fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: projectId,
+      target_file: targetFile,
+      vhdl_code: vhdlCode,
+      circuit_name: circuitName,
+      issues,
+    }),
+  });
+  return res.json();
+}
+
 export async function chatWithAgent(
   message: string,
   circuitContext?: {
@@ -176,7 +207,8 @@ export async function chatWithAgent(
   },
   openrouterKey?: string,
   model?: string,
-  projectId?: string
+  projectId?: string,
+  chatHistory?: any[]
 ): Promise<{
   success: boolean;
   model: string;
@@ -194,6 +226,7 @@ export async function chatWithAgent(
       openrouter_key: openrouterKey,
       model,
       project_id: projectId,
+      chat_history: chatHistory,
     }),
   });
   return res.json();

@@ -66,6 +66,7 @@ export interface SchematicCanvasProps {
   onNodeSelect?: (node: NetlistNode | null) => void;
   onWireSelect?: (wireId: string | null, wireName?: string) => void;
   onAddToAgentContext?: (item: { type: 'node' | 'wire' | 'code_range' | 'file' | 'canvas_snapshot' | string; label: string; data: any }) => void;
+  onClearCanvas?: () => void;
 }
 
 export interface CanvasNotification {
@@ -225,6 +226,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   onNodeSelect,
   onWireSelect,
   onAddToAgentContext,
+  onClearCanvas,
 }) => {
   const [zoom, setZoom] = useState<number>(() => {
     if (activeProjectId) {
@@ -1354,6 +1356,22 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     setZoom(1);
     addNotification('info', 'Reset View', 'Layout restored to initial circuit state.');
   };
+
+  // Clear all components and connections from the schematic canvas
+  const handleClearCanvas = useCallback(() => {
+    setSelectedNode(null);
+    setSelectedWire(null);
+    setNodePositions({});
+    if (activeProjectId) {
+      try {
+        localStorage.removeItem('circuitforge_canvas_pos_' + activeProjectId);
+      } catch (e) {}
+    }
+    if (onClearCanvas) {
+      onClearCanvas();
+    }
+    addNotification('info', 'Canvas Cleared', 'All schematic components, connections, and DRC markers removed.');
+  }, [activeProjectId, onClearCanvas, addNotification]);
 
   // Nudge selected node by grid units
   const handleNudgeNode = (dx: number, dy: number) => {
@@ -2896,6 +2914,14 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           title="Reset Components to Default Layout"
         >
           <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={handleClearCanvas}
+          className="p-1.5 hover:bg-rose-950/80 rounded-lg text-slate-400 hover:text-rose-300 transition cursor-pointer"
+          title="Clear Canvas (Wipe components & connections)"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
 
         <button
@@ -4983,6 +5009,18 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
               >
                 <Grid className="w-3.5 h-3.5 text-sky-400" />
                 <span>Toggle Grid (20px Pitch)</span>
+              </button>
+              <div className="h-px bg-slate-800 my-1" />
+              <button
+                onClick={() => {
+                  handleClearCanvas();
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-2 py-1 rounded hover:bg-rose-950/80 flex items-center space-x-2 text-rose-400 hover:text-rose-200 transition font-medium cursor-pointer"
+                title="Clear all components and connections from canvas"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Clear Canvas</span>
               </button>
             </div>
           )}

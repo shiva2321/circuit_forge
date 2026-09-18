@@ -101,6 +101,9 @@ export interface StudioWindowManagerProps {
   isAutosaveEnabled?: boolean;
   onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'idle', text?: string) => void;
   onAddToAgentContext?: (item: { type: any; label: string; data: any }) => void;
+  onClearCanvas?: () => void;
+  onActiveFileChange?: (path: string) => void;
+  onConsumeTargetOpenFilePath?: () => void;
 }
 
 const MIN_WINDOW_WIDTH = 340;
@@ -156,6 +159,9 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
   isAutosaveEnabled = true,
   onSaveStatusChange,
   onAddToAgentContext,
+  onClearCanvas,
+  onActiveFileChange,
+  onConsumeTargetOpenFilePath,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [topZ, setTopZ] = useState<number>(10);
@@ -1010,6 +1016,7 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
               }
             }}
             onAddToAgentContext={handleAddToAgentContext}
+            onClearCanvas={onClearCanvas}
           />
         );
       case 'editor':
@@ -1033,6 +1040,8 @@ export const StudioWindowManager: React.FC<StudioWindowManagerProps> = ({
             isAutosaveEnabled={isAutosaveEnabled}
             onSaveStatusChange={onSaveStatusChange}
             onAddToAgentContext={handleAddToAgentContext}
+            onActiveFileChange={onActiveFileChange}
+            onConsumeTargetOpenFilePath={onConsumeTargetOpenFilePath}
           />
         );
       case 'waveform':

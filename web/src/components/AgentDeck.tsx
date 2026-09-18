@@ -1031,14 +1031,28 @@ export const AgentDeck: React.FC<AgentDeckProps> = ({
   }, [circuitContext, excludedContextKeys]);
 
   const clearCurrentSession = useCallback(() => {
-    if (!window.confirm('Clear this conversation? This cannot be undone.')) return;
-    saveCurrentSession();
-    setUserChatMessages([]);
+    const pid = activeProjectId || 'default';
+    const now = Date.now();
+    setUserChatMessages([
+      {
+        id: `welcome_${now}`,
+        time: now,
+        text: '👋 **Hardware Co-Pilot Ready**\n\nAsk questions, explore architectural alternatives, verify VHDL syntax, or inspect canvas DRC rules. Type your message below.',
+        isAgent: true,
+      }
+    ]);
+    setChatSessions([]);
+    setClearedLogsTimestamp(now);
+    onClearLogs?.();
     try {
-      const pid = activeProjectId || 'default';
+      localStorage.setItem(`cf_cleared_logs_ts_${pid}`, now.toString());
       localStorage.removeItem(`cf_current_msgs_${pid}`);
+      localStorage.removeItem(SESSION_STORAGE_KEY(pid));
     } catch {}
-  }, [saveCurrentSession, activeProjectId]);
+    setSteerPrompt('');
+    setContextChips([]);
+    setShowHistoryPanel(false);
+  }, [activeProjectId, onClearLogs]);
 
   const deleteSession = useCallback((sessionId: string) => {
     const pid = activeProjectId || 'default';

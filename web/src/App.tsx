@@ -125,7 +125,25 @@ export function App() {
   });
   const [codeEditorReloadVersion, setCodeEditorReloadVersion] = useState<number>(0);
   const [targetOpenFilePath, setTargetOpenFilePath] = useState<string | undefined>(undefined);
+  const [currentActiveEditorFile, setCurrentActiveEditorFile] = useState<string | undefined>(undefined);
   const [topFilePath, setTopFilePath] = useState<string>('src/full_adder.vhd');
+
+  const handleClearCanvas = useCallback(() => {
+    setNetlist({
+      nodes: [],
+      wires: [],
+      inputs: [],
+      outputs: [],
+      primary_inputs: [],
+      primary_outputs: [],
+    } as any);
+    setActiveFaults({});
+    setProbeValues({});
+  }, []);
+
+  const handleConsumeTargetOpenFilePath = useCallback(() => {
+    setTargetOpenFilePath(undefined);
+  }, []);
   const [incomingContextItem, setIncomingContextItem] = useState<{
     type: string;
     label: string;
@@ -1144,6 +1162,9 @@ end rtl;`);
                 if (txt) setGlobalSaveText(txt);
               }}
               onAddToAgentContext={handleAddToAgentContext}
+              onClearCanvas={handleClearCanvas}
+              onActiveFileChange={setCurrentActiveEditorFile}
+              onConsumeTargetOpenFilePath={handleConsumeTargetOpenFilePath}
             />
           )}
 
@@ -1231,7 +1252,7 @@ end rtl;`);
                 probes: probeValues,
                 faults: activeFaults,
                 netlist: netlist,
-                active_file: targetOpenFilePath || topFilePath || 'src/full_adder.vhd',
+                active_file: currentActiveEditorFile || targetOpenFilePath || topFilePath || 'src/full_adder.vhd',
                 active_tab: activeTab,
                 active_tab_label:
                   activeTab === 'design'

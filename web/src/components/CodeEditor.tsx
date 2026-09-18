@@ -80,6 +80,11 @@ export function isDesignRtlFile(filePath: string): boolean {
   return true;
 }
 
+export function normalizePath(p: string): string {
+  if (!p) return '';
+  return p.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
 export interface FileItem {
   name: string;
   path: string;
@@ -107,6 +112,8 @@ export interface CodeEditorProps {
   isAutosaveEnabled?: boolean;
   onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'idle', text?: string) => void;
   onAddToAgentContext?: (item: { type: 'code_range' | 'file'; label: string; data: any }) => void;
+  onActiveFileChange?: (filePath: string) => void;
+  onConsumeTargetOpenFilePath?: () => void;
 }
 
 const DEFAULT_STARTER_FILES: FileItem[] = [
@@ -354,6 +361,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   isAutosaveEnabled = true,
   onSaveStatusChange,
   onAddToAgentContext,
+  onActiveFileChange,
+  onConsumeTargetOpenFilePath,
 }) => {
   // Explorer Sidebar State (open by default for direct file access)
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -362,6 +371,44 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     () => new Set(['src', 'tb', 'constraints'])
   );
+
+  // Resizable Explorer Sidebar State (persisted to localStorage)
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('circuitforge_editor_tree_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 160 && parsed <= 600) return parsed;
+      }
+    } catch {}
+    return 260; // default 260px
+  });
+  const [isResizingTree, setIsResizingTree] = useState<boolean>(false);
+
+  const handleTreeResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingTree(true);
+    const startX = e.clientX;
+    const startWidth = treeWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(160, Math.min(600, startWidth + (moveEvent.clientX - startX)));
+      setTreeWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setIsResizingTree(false);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setTreeWidth((finalWidth) => {
+        try { localStorage.setItem('circuitforge_editor_tree_width', finalWidth.toString()); } catch {}
+        return finalWidth;
+      });
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
 
   // Track the designated top design file for the canvas (e.g. 'src/full_adder.vhd')
   const [internalTopFilePath, setInternalTopFilePath] = useState<string>(
@@ -385,7 +432,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [activeFilePath, setActiveFilePath] = useState<string>(() => {
     if (activeProjectId) {
       const saved = localStorage.getItem('circuitforge_active_file_' + activeProjectId);
-      if (saved) return saved;
+      if (saved) return normalizePath(saved);
     }
     return 'src/full_adder.vhd';
   });
@@ -437,25 +484,43 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   }, []);
 
   // Safe tab switcher that suppresses spurious Monaco onChange events
-  const handleSelectTab = useCallback((targetPath: string) => {
+  const handleSelectTab = useCallback((rawPath: string) => {
+    const targetPath = normalizePath(rawPath);
     setActiveFilePath((currentActive) => {
-      if (currentActive === targetPath) return currentActive;
+      if (normalizePath(currentActive) === targetPath) return currentActive;
       isProgrammaticUpdateRef.current = true;
       Promise.resolve().then(() => {
         isProgrammaticUpdateRef.current = false;
       });
       return targetPath;
     });
-  }, []);
+    onActiveFileChange?.(targetPath);
+    if (activeProjectId) {
+      try {
+        localStorage.setItem('circuitforge_active_file_' + activeProjectId, targetPath);
+      } catch (e) {}
+    }
+  }, [activeProjectId, onActiveFileChange]);
 
-  // Open file by relative path helper
+  // Open file by relative path helper (independent of files state to prevent infinite loops)
   const openFileByPath = useCallback(
-    async (targetPath: string) => {
-      const existing = files.find((f) => f.path === targetPath);
-      if (existing) {
-        handleSelectTab(existing.path);
+    async (rawPath: string) => {
+      if (!rawPath) return;
+      const targetPath = normalizePath(rawPath);
+
+      let alreadyOpen = false;
+      setFiles((prev) => {
+        if (prev.some((f) => normalizePath(f.path) === targetPath)) {
+          alreadyOpen = true;
+        }
+        return prev;
+      });
+
+      if (alreadyOpen) {
+        handleSelectTab(targetPath);
         return;
       }
+
       try {
         const res = await readProjectFile(activeProjectId, targetPath);
         if (res && res.content !== undefined) {
@@ -466,22 +531,31 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             code: res.content,
             isDirty: false,
           };
-          setFiles((prev) => [...prev, newFile]);
+          setFiles((prev) => {
+            const filtered = prev.filter((f) => normalizePath(f.path) !== targetPath);
+            return [...filtered, newFile];
+          });
           handleSelectTab(targetPath);
-          // Note: Opening a file never auto-pushes code to canvas unless explicitly synthesized!
         }
       } catch (err) {
         console.error('Failed to read file from backend:', err);
       }
     },
-    [files, activeProjectId, handleSelectTab]
+    [activeProjectId, handleSelectTab]
   );
+
+  const lastHandledTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (targetOpenFilePath) {
-      openFileByPath(targetOpenFilePath);
+      const norm = normalizePath(targetOpenFilePath);
+      if (norm && norm !== lastHandledTargetRef.current) {
+        lastHandledTargetRef.current = norm;
+        openFileByPath(norm);
+        onConsumeTargetOpenFilePath?.();
+      }
     }
-  }, [targetOpenFilePath, openFileByPath]);
+  }, [targetOpenFilePath, openFileByPath, onConsumeTargetOpenFilePath]);
 
   // Fetch Tree & Files from Project Manager
   const loadTree = useCallback(
@@ -584,8 +658,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                   if (savedTabsRaw) {
                     try {
                       const tabPaths: string[] = JSON.parse(savedTabsRaw);
-                      const additionalPaths = tabPaths.filter((p) => p !== detectedTop);
+                      const normTop = normalizePath(detectedTop);
+                      const additionalPaths = tabPaths.map(normalizePath).filter((p) => p !== normTop);
                       for (const addPath of additionalPaths) {
+                        if (restoredFiles.some((f) => normalizePath(f.path) === addPath)) continue;
                         try {
                           const fileRes = await readProjectFile(projId, addPath);
                           if (fileRes && fileRes.content !== undefined) {
@@ -603,18 +679,20 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                   }
 
                   setFiles(restoredFiles);
-                  const activeToSelect = savedActiveFile && restoredFiles.some((f) => f.path === savedActiveFile)
-                    ? savedActiveFile
-                    : detectedTop;
+                  const normActive = savedActiveFile ? normalizePath(savedActiveFile) : null;
+                  const activeToSelect = normActive && restoredFiles.some((f) => normalizePath(f.path) === normActive)
+                    ? normActive
+                    : normalizePath(detectedTop);
                   setActiveFilePath(activeToSelect);
                   // Synchronize design file with canvas on new project load
                   onChangeCode(initialCode);
                 } else {
                   setFiles((prev) => {
-                    const exists = prev.some((f) => f.path === detectedTop);
+                    const normTop = normalizePath(detectedTop);
+                    const exists = prev.some((f) => normalizePath(f.path) === normTop);
                     if (!exists) return [topItem, ...prev];
                     return prev.map((f) =>
-                      f.path === detectedTop ? { ...f, code: initialCode } : f
+                      normalizePath(f.path) === normTop ? { ...f, code: initialCode } : f
                     );
                   });
                 }
@@ -702,26 +780,35 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   // Open file in editor (from tree click)
   const handleOpenFileFromTree = async (node: FileTreeNode) => {
     if (node.is_dir) return;
-    const existing = files.find((f) => f.path === node.path);
-    if (existing) {
-      handleSelectTab(existing.path);
+    const targetPath = normalizePath(node.path);
+
+    let alreadyOpen = false;
+    setFiles((prev) => {
+      if (prev.some((f) => normalizePath(f.path) === targetPath)) {
+        alreadyOpen = true;
+      }
+      return prev;
+    });
+
+    if (alreadyOpen) {
+      handleSelectTab(targetPath);
       return;
     }
 
     try {
-      const res = await readProjectFile(activeProjectId, node.path);
+      const res = await readProjectFile(activeProjectId, targetPath);
       if (res && res.content !== undefined) {
         const newFile: FileItem = {
           name: node.name,
-          path: node.path,
+          path: targetPath,
           code: res.content,
           isDirty: false,
         };
         setFiles((prev) => {
-          const updated = [...prev.filter((f) => f.path !== newFile.path), newFile];
-          return updated;
+          const filtered = prev.filter((f) => normalizePath(f.path) !== targetPath);
+          return [...filtered, newFile];
         });
-        handleSelectTab(node.path);
+        handleSelectTab(targetPath);
       }
     } catch (err) {
       console.error('Failed to read file from backend:', err);
@@ -729,13 +816,73 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   };
 
   // Close file tab
-  const handleCloseTab = (filePath: string) => {
-    if (files.length <= 1) return;
-    const remaining = files.filter((f) => f.path !== filePath);
-    setFiles(remaining);
-    if (activeFilePath === filePath) {
-      handleSelectTab(remaining[0].path);
+  const handleCloseTab = (rawPath: string) => {
+    const filePath = normalizePath(rawPath);
+    setFiles((prev) => {
+      const remaining = prev.filter((f) => normalizePath(f.path) !== filePath);
+      if (remaining.length === 0) {
+        const topPath = normalizePath(topFilePath || internalTopFilePath || 'src/full_adder.vhd');
+        readProjectFile(activeProjectId, topPath).then((res) => {
+          if (res && res.content !== undefined) {
+            const name = topPath.split('/').pop() || topPath;
+            setFiles([{ name, path: topPath, code: res.content, isDirty: false }]);
+            handleSelectTab(topPath);
+          }
+        }).catch(() => {});
+        return prev;
+      }
+
+      if (normalizePath(activeFilePath) === filePath) {
+        const closedIdx = prev.findIndex((f) => normalizePath(f.path) === filePath);
+        const nextTab = remaining[Math.min(closedIdx, remaining.length - 1)];
+        if (nextTab) {
+          handleSelectTab(nextTab.path);
+        }
+      }
+
+      if (activeProjectId) {
+        try {
+          const paths = remaining.map((f) => normalizePath(f.path));
+          localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify(paths));
+        } catch (e) {}
+      }
+
+      return remaining;
+    });
+
+    if (lastHandledTargetRef.current === filePath) {
+      lastHandledTargetRef.current = null;
     }
+  };
+
+  const handleCloseOtherTabs = (rawPath: string) => {
+    const keepPath = normalizePath(rawPath);
+    setFiles((prev) => {
+      const remaining = prev.filter((f) => normalizePath(f.path) === keepPath);
+      if (activeProjectId) {
+        try {
+          localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify([keepPath]));
+        } catch (e) {}
+      }
+      return remaining;
+    });
+    handleSelectTab(keepPath);
+  };
+
+  const handleCloseAllTabs = () => {
+    const topPath = normalizePath(topFilePath || internalTopFilePath || 'src/full_adder.vhd');
+    readProjectFile(activeProjectId, topPath).then((res) => {
+      if (res && res.content !== undefined) {
+        const name = topPath.split('/').pop() || topPath;
+        setFiles([{ name, path: topPath, code: res.content, isDirty: false }]);
+        handleSelectTab(topPath);
+        if (activeProjectId) {
+          try {
+            localStorage.setItem('circuitforge_open_tabs_' + activeProjectId, JSON.stringify([topPath]));
+          } catch (e) {}
+        }
+      }
+    }).catch(() => {});
   };
 
   // Monaco editor change handler — only forwards user edits to App.tsx, not programmatic updates
@@ -1122,41 +1269,55 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             <FolderTree className="w-4 h-4" />
           </button>
 
-          {/* Scrollable File Tabs */}
-          <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar min-w-0 flex-1 py-0.5">
+          {/* Scrollable File Tabs with Wheel support and Close Actions */}
+          <div
+            onWheel={(e) => { e.currentTarget.scrollLeft += e.deltaY; }}
+            className="flex items-center space-x-1 overflow-x-auto no-scrollbar min-w-0 flex-1 py-0.5"
+          >
             {files.map((file) => {
-              const isActive = file.path === activeFilePath;
+              const normPath = normalizePath(file.path);
+              const isActive = normPath === normalizePath(activeFilePath);
               return (
                 <div
-                  key={file.path}
-                  onClick={() => handleSelectTab(file.path)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs font-mono cursor-pointer border-t-2 transition flex-shrink-0 ${
+                  key={normPath}
+                  onClick={() => handleSelectTab(normPath)}
+                  title={normPath}
+                  className={`group flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs font-mono cursor-pointer border-t-2 transition flex-shrink-0 ${
                     isActive
                       ? 'bg-slate-950 border-purple-500 text-slate-100 font-bold shadow'
                       : 'bg-slate-900/50 border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                   }`}
                 >
                   <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-purple-400' : 'text-slate-500'}`} />
-                  <span>{file.name}</span>
+                  <span className="max-w-[140px] truncate">{file.name}</span>
                   {file.isDirty && (
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-400" title="Unsaved changes" />
                   )}
-                  {files.length > 1 && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCloseTab(file.path);
-                      }}
-                      className="p-0.5 hover:text-rose-400 opacity-50 hover:opacity-100 transition rounded"
-                      title="Close file tab"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseTab(normPath);
+                    }}
+                    className="p-0.5 hover:text-rose-400 text-slate-500 hover:bg-slate-800 opacity-60 hover:opacity-100 transition rounded"
+                    title={`Close ${file.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
               );
             })}
           </div>
+
+          {/* Tab Action: Close All */}
+          {files.length > 1 && (
+            <button
+              onClick={handleCloseAllTabs}
+              className="px-1.5 py-1 text-[10px] font-mono text-slate-400 hover:text-rose-300 hover:bg-slate-800 rounded transition cursor-pointer flex-shrink-0"
+              title="Close all open tabs and reset to top file"
+            >
+              Close All
+            </button>
+          )}
 
           {/* Pinned New File Button: Stays permanently visible no matter how many tabs are open */}
           <button
@@ -1343,7 +1504,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       <div className="flex-1 flex overflow-hidden">
         {/* Project File Tree Explorer Sidebar */}
         {isSidebarOpen && (
-          <div className="w-60 border-r border-slate-800 bg-slate-900/70 flex flex-col flex-shrink-0 select-none">
+          <>
+            <div
+              style={{ width: `${treeWidth}px` }}
+              className="border-r border-slate-800 bg-slate-900/70 flex flex-col flex-shrink-0 select-none overflow-hidden"
+            >
             {/* Explorer Header */}
             <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
               <div className="flex items-center space-x-2 min-w-0">
@@ -1435,7 +1600,22 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
               <span className="text-purple-400 font-bold">{activeLang.toUpperCase()}</span>
             </div>
           </div>
-        )}
+          {/* Draggable Vertical Splitter Handle */}
+          <div
+            onMouseDown={handleTreeResizeStart}
+            onDoubleClick={() => {
+              setTreeWidth(260);
+              try { localStorage.setItem('circuitforge_editor_tree_width', '260'); } catch {}
+            }}
+            className={`w-1.5 -ml-1 z-20 cursor-col-resize transition-colors select-none group flex items-center justify-center flex-shrink-0 ${
+              isResizingTree ? 'bg-purple-500 shadow-md shadow-purple-500/50' : 'bg-transparent hover:bg-purple-500/60'
+            }`}
+            title="Drag to resize file tree sidebar (double-click to reset)"
+          >
+            <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-purple-300 rounded opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </>
+      )}
 
         {/* Right Editor Area */}
         <div className="flex-1 flex flex-col min-w-0 relative">

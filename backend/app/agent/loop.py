@@ -14,6 +14,7 @@ from backend.app.agent.openrouter import openrouter_client
 from backend.app.agent.hardware_generator import (
     detect_design_scale,
     clean_hardware_name,
+    generate_32_neuron_suite,
     generate_dsp_mac_suite,
     generate_64bit_microprocessor_suite,
     materialize_design_into_project
@@ -287,7 +288,13 @@ class CircuitAgent:
             effective_scale = detect_design_scale(goal) if scale <= 1 else scale
             if effective_scale >= 3 and project_id:
                 try:
-                    if effective_scale == 3:
+                    if any(k in goal.lower() for k in ("neuron", "neural", "synapse", "brain", "ann", "display")):
+                        self.log_thought(
+                            f"Scale {effective_scale} Neural Array & 4-Digit Display detected — generating 32-neuron hardware suite for '{circuit_name}'…",
+                            action="materialize_start"
+                        )
+                        suite = generate_32_neuron_suite(circuit_name)
+                    elif effective_scale == 3:
                         self.log_thought(
                             f"Scale 3 DSP subsystem detected — generating pipelined MAC hardware suite for '{circuit_name}'…",
                             action="materialize_start"

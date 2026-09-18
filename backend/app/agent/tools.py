@@ -52,15 +52,22 @@ class CircuitTools:
     def design_circuit(self, name: str, scale: int, specification: str, vhdl_code: Optional[str] = None) -> Dict[str, Any]:
         """Designs a circuit matching the specification, creates VHDL and registers it in the Knowledge Graph."""
         from backend.app.agent.hardware_generator import clean_hardware_name
-        clean_name = clean_hardware_name(name, default="dsp_mac_pipeline" if scale == 3 else "processor_top" if scale >= 4 else "full_adder")
-        safe_name = sanitize_vhdl_identifier(clean_name)
+        if name and name not in ("custom_circuit", "custom_design") and not name.startswith("task_"):
+            safe_name = sanitize_vhdl_identifier(name)
+        else:
+            clean_name = clean_hardware_name(name or specification, default="dsp_mac_pipeline" if scale == 3 else "processor_top" if scale >= 4 else "full_adder")
+            safe_name = sanitize_vhdl_identifier(clean_name)
 
         if not vhdl_code:
             spec_lower = (specification or "").lower()
             name_lower = (name or "").lower()
             combined = f"{name_lower} {spec_lower}"
 
-            if any(k in combined for k in ("useful", "demo", "dsp", "mac", "multiply", "accumulat", "accelerator")):
+            if any(k in combined for k in ("neuron", "neural", "brain", "synapse", "ann", "display")):
+                from backend.app.agent.hardware_generator import generate_32_neuron_suite
+                suite = generate_32_neuron_suite(safe_name)
+                vhdl_code = suite["files"].get(f"src/{safe_name}.vhd") or suite["files"]["src/neural_processor_top.vhd"]
+            elif any(k in combined for k in ("useful", "demo", "dsp", "mac", "multiply", "accumulat", "accelerator")):
                 vhdl_code = f"""library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;

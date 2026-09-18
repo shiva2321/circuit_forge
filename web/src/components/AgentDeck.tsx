@@ -156,6 +156,7 @@ const ENGINEERING_ACTIONS = new Set([
 
 export const deriveCleanCircuitName = (goal: string): string => {
   const g = goal.toLowerCase();
+  if (/neuron|neural|brain|synapse|ann|display/.test(g)) return 'neural_processor_top';
   if (/dsp|mac|multiply|accumulat/.test(g)) return 'dsp_mac_pipeline';
   if (/processor|microprocessor|cpu|riscv|risc-v|rv32|rv64|core/.test(g)) return 'riscv_cpu_core';
   if (/alu|arithmetic/.test(g)) return 'alu_acc_subsystem';
@@ -176,7 +177,7 @@ export const deriveCleanCircuitName = (goal: string): string => {
 const inferScale = (goal: string): number => {
   const g = goal.toLowerCase();
   if (/processor|microprocessor|cpu|riscv|risc-v|rv32|rv64|core/.test(g)) return 4;
-  if (/alu|subsystem|controller|fsm|uart|dsp|decoder|multiplier|mac|useful|demo|accelerator|pipeline/.test(g)) return 3;
+  if (/neuron|neural|brain|synapse|ann|display|alu|subsystem|controller|fsm|uart|dsp|decoder|multiplier|mac|useful|demo|accelerator|pipeline/.test(g)) return 3;
   if (/counter|register|shift|timer|fifo|accumulator/.test(g)) return 2;
   return 1;
 };

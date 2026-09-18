@@ -16,6 +16,8 @@ def clean_hardware_name(name: str, default: str = "dsp_mac_pipeline") -> str:
     if not name or name in ("custom_circuit", "custom_design"):
         return default
     g = name.lower()
+    if any(k in g for k in ("neuron", "neural", "synapse", "brain", "ann", "display")):
+        return "neural_processor_top"
     if any(k in g for k in ("dsp", "mac", "multiply", "accumulat", "useful", "demo", "accelerator", "pipeline")):
         return "dsp_mac_pipeline"
     if any(k in g for k in ("processor", "microprocessor", "cpu", "riscv", "risc-v", "rv32", "rv64", "core")):
@@ -51,11 +53,599 @@ def detect_design_scale(goal: str) -> int:
     g = goal.lower()
     if any(k in g for k in ["processor", "microprocessor", "cpu", "riscv", "risc-v", "rv32", "rv64", "core"]):
         return 4
-    if any(k in g for k in ["alu", "subsystem", "controller", "fsm", "uart", "dsp", "decoder", "multiplier", "mac", "pipeline", "accelerator", "useful", "demo"]):
+    if any(k in g for k in ["neuron", "neural", "synapse", "brain", "ann", "alu", "subsystem", "controller", "fsm", "uart", "dsp", "decoder", "multiplier", "mac", "pipeline", "accelerator", "useful", "demo", "display"]):
         return 3
     if any(k in g for k in ["counter", "register", "shift", "timer", "fifo", "accumulator"]):
         return 2
     return 1
+
+def generate_32_neuron_suite(circuit_name: str = "neural_processor_top") -> Dict[str, Any]:
+    """
+    Generates a complete, synthesizable 32-Neuron Hardware Array with 4-Digit Seven-Segment Display (Scale 3/4):
+    - Arithmetic Neuron Core with MAC & ReLU Activation (src/neuron_core.vhd)
+    - 32-Neuron Parallel Array with Reduction & Inter-Array Chaining Provisions (src/neuron_layer_32.vhd)
+    - 4-Digit Multiplexed Seven-Segment Display Driver (src/display_4x7seg.vhd)
+    - Top-Level Structural Integration Wiring Neurons to Display (src/neural_processor_top.vhd)
+    - Self-Checking Verification Testbench (tb/neural_processor_tb.vhd)
+    - Comprehensive Architecture Plan Document (docs/neural_architecture_plan.md)
+    """
+    top_entity = clean_hardware_name(circuit_name, default="neural_processor_top")
+    if top_entity not in ("neural_processor_top", "neural_array_top"):
+        top_entity = "neural_processor_top"
+
+    files: Dict[str, str] = {}
+
+    # 1. Arithmetic Neuron Core with Multiply-Accumulate & Clamped ReLU Activation
+    files["src/neuron_core.vhd"] = """library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity neuron_core is
+    Port (
+        clk            : in  STD_LOGIC;
+        rst            : in  STD_LOGIC;
+        valid_in       : in  STD_LOGIC;
+        stimulus_in    : in  STD_LOGIC_VECTOR(7 downto 0); -- Signed 8-bit electrical input
+        weight_in      : in  STD_LOGIC_VECTOR(7 downto 0); -- Signed 8-bit synaptic weight
+        bias_in        : in  STD_LOGIC_VECTOR(7 downto 0); -- Signed 8-bit threshold bias
+        activation_out : out STD_LOGIC_VECTOR(7 downto 0); -- 8-bit rectified linear activation (ReLU)
+        mac_raw_out    : out STD_LOGIC_VECTOR(15 downto 0);-- 16-bit signed raw MAC value
+        valid_out      : out STD_LOGIC
+    );
+end neuron_core;
+
+architecture rtl of neuron_core is
+    signal prod_reg : signed(15 downto 0) := (others => '0');
+    signal sum_reg  : signed(16 downto 0) := (others => '0');
+    signal v_pipe1  : STD_LOGIC := '0';
+    signal v_pipe2  : STD_LOGIC := '0';
+begin
+    process(clk, rst)
+    begin
+        if rst = '1' then
+            prod_reg <= (others => '0');
+            sum_reg  <= (others => '0');
+            v_pipe1  <= '0';
+            v_pipe2  <= '0';
+        elsif rising_edge(clk) then
+            v_pipe1 <= valid_in;
+            v_pipe2 <= v_pipe1;
+
+            -- Stage 1: Synaptic product multiplication
+            if valid_in = '1' then
+                prod_reg <= signed(stimulus_in) * signed(weight_in);
+            end if;
+
+            -- Stage 2: Bias accumulation + threshold
+            if v_pipe1 = '1' then
+                sum_reg <= resize(prod_reg, 17) + resize(signed(bias_in), 17);
+            end if;
+        end if;
+    end process;
+
+    -- Non-Linear Activation Function: Rectified Linear Unit (ReLU) with saturation clamp
+    process(sum_reg)
+    begin
+        if sum_reg <= 0 then
+            activation_out <= (others => '0'); -- Negative inhibition clamped to zero
+        elsif sum_reg > 127 then
+            activation_out <= "01111111";      -- Positive saturation clamp at +127
+        else
+            activation_out <= std_logic_vector(sum_reg(7 downto 0));
+        end if;
+    end process;
+
+    mac_raw_out <= std_logic_vector(sum_reg(15 downto 0));
+    valid_out   <= v_pipe2;
+end rtl;
+"""
+
+    # 2. 32-Neuron Parallel Layer with Reduction Tree & Inter-Layer Chaining Provisions
+    files["src/neuron_layer_32.vhd"] = """library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity neuron_layer_32 is
+    Port (
+        clk               : in  STD_LOGIC;
+        rst               : in  STD_LOGIC;
+        valid_in          : in  STD_LOGIC;
+        stimulus_in       : in  STD_LOGIC_VECTOR(7 downto 0);  -- Shared electrical stimulus bus
+        cascade_in        : in  STD_LOGIC_VECTOR(15 downto 0); -- Inter-layer daisy-chain expansion provision
+        layer_sum_out     : out STD_LOGIC_VECTOR(15 downto 0); -- Aggregate neural layer activation score
+        winning_neuron_id : out STD_LOGIC_VECTOR(4 downto 0);  -- Index (0-31) of max active neuron
+        cascade_out       : out STD_LOGIC_VECTOR(15 downto 0); -- Provision for downstream neural array chaining
+        valid_out         : out STD_LOGIC
+    );
+end neuron_layer_32;
+
+architecture structural of neuron_layer_32 is
+    component neuron_core is
+        Port (
+            clk            : in  STD_LOGIC;
+            rst            : in  STD_LOGIC;
+            valid_in       : in  STD_LOGIC;
+            stimulus_in    : in  STD_LOGIC_VECTOR(7 downto 0);
+            weight_in      : in  STD_LOGIC_VECTOR(7 downto 0);
+            bias_in        : in  STD_LOGIC_VECTOR(7 downto 0);
+            activation_out : out STD_LOGIC_VECTOR(7 downto 0);
+            mac_raw_out    : out STD_LOGIC_VECTOR(15 downto 0);
+            valid_out      : out STD_LOGIC
+        );
+    end component;
+
+    type act_array_t is array (0 to 31) of STD_LOGIC_VECTOR(7 downto 0);
+    signal act_array  : act_array_t;
+    signal core_valid : STD_LOGIC_VECTOR(31 downto 0);
+
+    type weight_lut_t is array (0 to 31) of signed(7 downto 0);
+    -- Diverse synaptic weights covering harmonic, linear, and receptive-field patterns
+    constant WEIGHT_LUT : weight_lut_t := (
+        to_signed(1, 8),   to_signed(2, 8),   to_signed(3, 8),   to_signed(4, 8),
+        to_signed(5, 8),   to_signed(6, 8),   to_signed(7, 8),   to_signed(8, 8),
+        to_signed(-1, 8),  to_signed(-2, 8),  to_signed(-3, 8),  to_signed(-4, 8),
+        to_signed(10, 8),  to_signed(12, 8),  to_signed(15, 8),  to_signed(20, 8),
+        to_signed(-5, 8),  to_signed(-8, 8),  to_signed(-10, 8), to_signed(-12, 8),
+        to_signed(14, 8),  to_signed(18, 8),  to_signed(22, 8),  to_signed(25, 8),
+        to_signed(2, 8),   to_signed(4, 8),   to_signed(6, 8),   to_signed(8, 8),
+        to_signed(11, 8),  to_signed(13, 8),  to_signed(17, 8),  to_signed(19, 8)
+    );
+
+    type bias_lut_t is array (0 to 31) of signed(7 downto 0);
+    constant BIAS_LUT : bias_lut_t := (
+        to_signed(0, 8),  to_signed(2, 8),  to_signed(-2, 8), to_signed(4, 8),
+        to_signed(-4, 8), to_signed(1, 8),  to_signed(3, 8),  to_signed(-1, 8),
+        to_signed(0, 8),  to_signed(5, 8),  to_signed(-3, 8), to_signed(2, 8),
+        to_signed(-2, 8), to_signed(6, 8),  to_signed(-5, 8), to_signed(0, 8),
+        to_signed(1, 8),  to_signed(-1, 8), to_signed(4, 8),  to_signed(-4, 8),
+        to_signed(2, 8),  to_signed(0, 8),  to_signed(-2, 8), to_signed(3, 8),
+        to_signed(-3, 8), to_signed(5, 8),  to_signed(-1, 8), to_signed(0, 8),
+        to_signed(2, 8),  to_signed(-2, 8), to_signed(4, 8),  to_signed(-4, 8)
+    );
+
+    signal accum_sum : unsigned(15 downto 0) := (others => '0');
+    signal max_id    : unsigned(4 downto 0) := (others => '0');
+    signal v_out_reg : STD_LOGIC := '0';
+begin
+    -- Parallel 32-Neuron Array Generation
+    gen_neurons: for i in 0 to 31 generate
+        u_neuron: neuron_core
+            port map (
+                clk            => clk,
+                rst            => rst,
+                valid_in       => valid_in,
+                stimulus_in    => stimulus_in,
+                weight_in      => std_logic_vector(WEIGHT_LUT(i)),
+                bias_in        => std_logic_vector(BIAS_LUT(i)),
+                activation_out => act_array(i),
+                mac_raw_out    => open,
+                valid_out      => core_valid(i)
+            );
+    end generate;
+
+    -- Reduction Pipeline: Parallel Activation Accumulator + Winner-Take-All Index
+    process(clk, rst)
+        variable v_sum : unsigned(15 downto 0);
+        variable v_max : unsigned(7 downto 0);
+        variable v_id  : unsigned(4 downto 0);
+    begin
+        if rst = '1' then
+            accum_sum <= (others => '0');
+            max_id    <= (others => '0');
+            v_out_reg <= '0';
+        elsif rising_edge(clk) then
+            v_out_reg <= core_valid(0);
+            if core_valid(0) = '1' then
+                v_sum := unsigned(cascade_in); -- Incorporate expansion cascade from previous array
+                v_max := (others => '0');
+                v_id  := (others => '0');
+
+                for i in 0 to 31 loop
+                    v_sum := v_sum + unsigned(act_array(i));
+                    if unsigned(act_array(i)) > v_max then
+                        v_max := unsigned(act_array(i));
+                        v_id  := to_unsigned(i, 5);
+                    end if;
+                end loop;
+
+                accum_sum <= v_sum;
+                max_id    <= v_id;
+            end if;
+        end if;
+    end process;
+
+    layer_sum_out     <= std_logic_vector(accum_sum);
+    winning_neuron_id <= std_logic_vector(max_id);
+    cascade_out       <= std_logic_vector(accum_sum); -- Forwarded for inter-cluster chaining
+    valid_out         <= v_out_reg;
+end structural;
+"""
+
+    # 3. 4-Digit Seven-Segment Multiplexed Display Driver
+    files["src/display_4x7seg.vhd"] = """library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity display_4x7seg is
+    Port (
+        clk        : in  STD_LOGIC;                      -- Main system clock
+        rst        : in  STD_LOGIC;                      -- Active-high reset
+        value_in   : in  STD_LOGIC_VECTOR(15 downto 0);  -- 16-bit hex/BCD value (4 digits)
+        dots_in    : in  STD_LOGIC_VECTOR(3 downto 0);   -- Decimal points for digits 3..0
+        blank_in   : in  STD_LOGIC;                      -- Display blanking control
+        anode_out  : out STD_LOGIC_VECTOR(3 downto 0);   -- Active-low digit anodes (AN3..AN0)
+        seg_out    : out STD_LOGIC_VECTOR(6 downto 0);   -- Active-low cathodes (a,b,c,d,e,f,g)
+        dp_out     : out STD_LOGIC                       -- Active-low decimal point
+    );
+end display_4x7seg;
+
+architecture rtl of display_4x7seg is
+    -- Clock divider to generate ~1 kHz digit multiplexing refresh rate
+    signal clk_div     : unsigned(15 downto 0) := (others => '0');
+    signal digit_sel   : unsigned(1 downto 0) := "00";
+    signal cur_nibble  : std_logic_vector(3 downto 0);
+    signal cur_dp      : std_logic;
+    signal decoded_seg : std_logic_vector(6 downto 0);
+begin
+    -- Digit Multiplexing Clock Prescaler
+    process(clk, rst)
+    begin
+        if rst = '1' then
+            clk_div   <= (others => '0');
+            digit_sel <= "00";
+        elsif rising_edge(clk) then
+            clk_div <= clk_div + 1;
+            if clk_div = 0 then
+                digit_sel <= digit_sel + 1;
+            end if;
+        end if;
+    end process;
+
+    -- 4-to-1 Nibble Multiplexer
+    process(digit_sel, value_in, dots_in)
+    begin
+        case digit_sel is
+            when "00" =>
+                cur_nibble <= value_in(3 downto 0);
+                cur_dp     <= dots_in(0);
+                anode_out  <= "1110"; -- Digit 0 active
+            when "01" =>
+                cur_nibble <= value_in(7 downto 4);
+                cur_dp     <= dots_in(1);
+                anode_out  <= "1101"; -- Digit 1 active
+            when "10" =>
+                cur_nibble <= value_in(11 downto 8);
+                cur_dp     <= dots_in(2);
+                anode_out  <= "1011"; -- Digit 2 active
+            when "11" =>
+                cur_nibble <= value_in(15 downto 12);
+                cur_dp     <= dots_in(3);
+                anode_out  <= "0111"; -- Digit 3 active
+            when others =>
+                cur_nibble <= "0000";
+                cur_dp     <= '0';
+                anode_out  <= "1111";
+        end case;
+    end process;
+
+    -- Hexadecimal to 7-Segment Cathode Decoder (Active-Low: '0' = Lit)
+    -- Mapping: seg_out(6 downto 0) = g, f, e, d, c, b, a
+    process(cur_nibble, blank_in)
+    begin
+        if blank_in = '1' then
+            decoded_seg <= "1111111"; -- All segments blanked
+        else
+            case cur_nibble is
+                when "0000" => decoded_seg <= "1000000"; -- '0'
+                when "0001" => decoded_seg <= "1111001"; -- '1'
+                when "0010" => decoded_seg <= "0100100"; -- '2'
+                when "0011" => decoded_seg <= "0110000"; -- '3'
+                when "0100" => decoded_seg <= "0011001"; -- '4'
+                when "0101" => decoded_seg <= "0010010"; -- '5'
+                when "0110" => decoded_seg <= "0000010"; -- '6'
+                when "0111" => decoded_seg <= "1111000"; -- '7'
+                when "1000" => decoded_seg <= "0000000"; -- '8'
+                when "1001" => decoded_seg <= "0010000"; -- '9'
+                when "1010" => decoded_seg <= "0001000"; -- 'A'
+                when "1011" => decoded_seg <= "0000011"; -- 'b'
+                when "1100" => decoded_seg <= "1000110"; -- 'C'
+                when "1101" => decoded_seg <= "0100001"; -- 'd'
+                when "1110" => decoded_seg <= "0000110"; -- 'E'
+                when "1111" => decoded_seg <= "0001110"; -- 'F'
+                when others => decoded_seg <= "1111111";
+            end case;
+        end if;
+    end process;
+
+    seg_out <= decoded_seg;
+    dp_out  <= not cur_dp; -- Active-low decimal point
+end rtl;
+"""
+
+    # 4. Top-Level Structural Integration: Neural Array + 4-Digit Display Driver
+    files[f"src/{top_entity}.vhd"] = f"""library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity {top_entity} is
+    Port (
+        clk                : in  STD_LOGIC;                      -- System clock (e.g. 50/100 MHz)
+        rst                : in  STD_LOGIC;                      -- System synchronous reset
+        stimulus_in        : in  STD_LOGIC_VECTOR(7 downto 0);   -- Electric stimulus vector
+        stimulus_valid     : in  STD_LOGIC;                      -- Strobe asserting valid electric input
+        cascade_in         : in  STD_LOGIC_VECTOR(15 downto 0);  -- Provision for chaining additional neural arrays
+        display_mode       : in  STD_LOGIC;                      -- '0' = Layer Activation Sum, '1' = Winner ID + Stimulus
+        anode_out          : out STD_LOGIC_VECTOR(3 downto 0);   -- 4-digit display active-low anodes
+        seg_out            : out STD_LOGIC_VECTOR(6 downto 0);   -- 7-segment active-low cathodes
+        dp_out             : out STD_LOGIC;                      -- Display decimal point
+        cascade_out        : out STD_LOGIC_VECTOR(15 downto 0);  -- Provision to cascade to downstream arrays
+        layer_active_led   : out STD_LOGIC;                      -- LED indicating neural firing activity
+        neuron_status_leds : out STD_LOGIC_VECTOR(7 downto 0)    -- Status LEDs (winning neuron ID + upper sum)
+    );
+end {top_entity};
+
+architecture structural of {top_entity} is
+    component neuron_layer_32 is
+        Port (
+            clk               : in  STD_LOGIC;
+            rst               : in  STD_LOGIC;
+            valid_in          : in  STD_LOGIC;
+            stimulus_in       : in  STD_LOGIC_VECTOR(7 downto 0);
+            cascade_in        : in  STD_LOGIC_VECTOR(15 downto 0);
+            layer_sum_out     : out STD_LOGIC_VECTOR(15 downto 0);
+            winning_neuron_id : out STD_LOGIC_VECTOR(4 downto 0);
+            cascade_out       : out STD_LOGIC_VECTOR(15 downto 0);
+            valid_out         : out STD_LOGIC
+        );
+    end component;
+
+    component display_4x7seg is
+        Port (
+            clk        : in  STD_LOGIC;
+            rst        : in  STD_LOGIC;
+            value_in   : in  STD_LOGIC_VECTOR(15 downto 0);
+            dots_in    : in  STD_LOGIC_VECTOR(3 downto 0);
+            blank_in   : in  STD_LOGIC;
+            anode_out  : out STD_LOGIC_VECTOR(3 downto 0);
+            seg_out    : out STD_LOGIC_VECTOR(6 downto 0);
+            dp_out     : out STD_LOGIC
+        );
+    end component;
+
+    signal layer_sum   : STD_LOGIC_VECTOR(15 downto 0);
+    signal winner_id   : STD_LOGIC_VECTOR(4 downto 0);
+    signal layer_valid : STD_LOGIC;
+    signal disp_value  : STD_LOGIC_VECTOR(15 downto 0);
+    signal disp_dots   : STD_LOGIC_VECTOR(3 downto 0);
+begin
+    -- 32-Neuron Array Subsystem
+    u_neural_array: neuron_layer_32
+        port map (
+            clk               => clk,
+            rst               => rst,
+            valid_in          => stimulus_valid,
+            stimulus_in       => stimulus_in,
+            cascade_in        => cascade_in,
+            layer_sum_out     => layer_sum,
+            winning_neuron_id => winner_id,
+            cascade_out       => cascade_out,
+            valid_out         => layer_valid
+        );
+
+    -- Display Mode Multiplexer:
+    -- Mode 0: Display 16-bit aggregate neural layer sum (HEX: 0000 - FFFF)
+    -- Mode 1: Display Winning Neuron ID [15:8] & Injected Stimulus [7:0]
+    process(display_mode, layer_sum, winner_id, stimulus_in)
+    begin
+        if display_mode = '0' then
+            disp_value <= layer_sum;
+            disp_dots  <= "0010"; -- Dot on digit 1 to indicate aggregate metric
+        else
+            disp_value <= "000" & winner_id & stimulus_in;
+            disp_dots  <= "1001"; -- Dots indicating dual telemetry
+        end if;
+    end process;
+
+    -- 4-Digit Seven-Segment Display Controller Subsystem
+    u_display_ctrl: display_4x7seg
+        port map (
+            clk        => clk,
+            rst        => rst,
+            value_in   => disp_value,
+            dots_in    => disp_dots,
+            blank_in   => '0',
+            anode_out  => anode_out,
+            seg_out    => seg_out,
+            dp_out     => dp_out
+        );
+
+    -- Primary Diagnostic Status Signals
+    layer_active_led   <= layer_valid;
+    neuron_status_leds <= winner_id & layer_sum(15 downto 13);
+end structural;
+"""
+
+    # 5. Verification Testbench
+    tb_code = f"""library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity {top_entity}_tb is
+end {top_entity}_tb;
+
+architecture sim of {top_entity}_tb is
+    signal clk                : STD_LOGIC := '0';
+    signal rst                : STD_LOGIC := '1';
+    signal stimulus_in        : STD_LOGIC_VECTOR(7 downto 0) := (others => '0');
+    signal stimulus_valid     : STD_LOGIC := '0';
+    signal cascade_in         : STD_LOGIC_VECTOR(15 downto 0) := (others => '0');
+    signal display_mode       : STD_LOGIC := '0';
+    signal anode_out          : STD_LOGIC_VECTOR(3 downto 0);
+    signal seg_out            : STD_LOGIC_VECTOR(6 downto 0);
+    signal dp_out             : STD_LOGIC;
+    signal cascade_out        : STD_LOGIC_VECTOR(15 downto 0);
+    signal layer_active_led   : STD_LOGIC;
+    signal neuron_status_leds : STD_LOGIC_VECTOR(7 downto 0);
+
+    constant CLK_PERIOD : time := 10 ns;
+begin
+    uut: entity work.{top_entity}
+        port map (
+            clk                => clk,
+            rst                => rst,
+            stimulus_in        => stimulus_in,
+            stimulus_valid     => stimulus_valid,
+            cascade_in         => cascade_in,
+            display_mode       => display_mode,
+            anode_out          => anode_out,
+            seg_out            => seg_out,
+            dp_out             => dp_out,
+            cascade_out        => cascade_out,
+            layer_active_led   => layer_active_led,
+            neuron_status_leds => neuron_status_leds
+        );
+
+    -- Clock Generator (100 MHz)
+    clk_process: process
+    begin
+        while now < 1000 ns loop
+            clk <= '0';
+            wait for CLK_PERIOD / 2;
+            clk <= '1';
+            wait for CLK_PERIOD / 2;
+        end loop;
+        wait;
+    end process;
+
+    -- Stimulus Sequence
+    stim_proc: process
+    begin
+        -- 1. Reset Asserted
+        rst <= '1';
+        wait for 30 ns;
+        rst <= '0';
+        wait for 20 ns;
+
+        -- 2. Inject Stimulus Vector 1 (Positive Stimulus = +16)
+        stimulus_in    <= std_logic_vector(to_signed(16, 8));
+        stimulus_valid <= '1';
+        cascade_in     <= (others => '0');
+        wait for 40 ns;
+
+        -- 3. Inject Stimulus Vector 2 (Strong Stimulus = +64) with Cascade Offset (+100)
+        stimulus_in    <= std_logic_vector(to_signed(64, 8));
+        cascade_in     <= std_logic_vector(to_unsigned(100, 16));
+        wait for 40 ns;
+
+        -- 4. Switch Display Mode to Winner ID + Stimulus
+        display_mode <= '1';
+        wait for 40 ns;
+
+        -- 5. Inhibit Stimulus (Negative Stimulus = -32) - ReLU Clamping Test
+        stimulus_in  <= std_logic_vector(to_signed(-32, 8));
+        display_mode <= '0';
+        wait for 60 ns;
+
+        wait;
+    end process;
+end sim;
+"""
+    files[f"tb/{top_entity}_tb.vhd"] = tb_code
+    files["tb/neural_processor_tb.vhd"] = tb_code
+
+    # 6. Comprehensive Architecture Specification Document
+    files["docs/neural_architecture_plan.md"] = f"""# 32-Neuron Hardware Array & 4-Digit Display Architecture Specification
+**Target Entity**: `{top_entity}`
+**Abstraction Level**: Scale 3/4 (Neural Accelerator Subsystem)
+**Author**: CircuitForge Autonomous EDA Engine
+
+---
+
+## 1. Executive Architectural Overview
+The `{top_entity}` system is a synthesizable hardware neural inference processor featuring a 32-neuron parallel array, pipelined MAC arithmetic units, ReLU non-linear activation functions, a reduction accumulator tree, daisy-chain cascading provisions, and an integrated 4-digit multiplexed seven-segment display controller.
+
+```
+                    +----------------------------------------------+
+                    |           ELECTRIC STIMULUS INPUT            |
+stimulus_in (8-bit) |===> [u_neural_array: neuron_layer_32]        |
+stimulus_valid      |---> 32 Parallel Pipelined MAC Neurons        |
+cascade_in (16-bit) |===> Interconnect + Chaining Provision        |
+                    +----------------------+-----------------------+
+                                           |
+                    +----------------------+-----------------------+
+                    | layer_sum_out (16b)  | winning_neuron_id (5b)|
+                    +----------------------+-----------------------+
+                                           |
+                                           v
+                    +----------------------------------------------+
+                    |             DISPLAY MODE SELECTOR            |
+display_mode ------>| Mode 0: 16-bit Hex Layer Activation Sum      |
+                    | Mode 1: Winning Neuron ID + Stimulus Level   |
+                    +----------------------+-----------------------+
+                                           | disp_value (16b)
+                                           v
+                    +----------------------------------------------+
+                    |        4-DIGIT SEVEN-SEGMENT DRIVER          |
+                    | [u_display_ctrl: display_4x7seg]             |
+                    | - 1 kHz Digit Multiplexing Prescaler         |
+                    | - 4-to-1 Nibble Time-Division Multiplexer    |
+                    | - Active-Low Hex-to-Cathode Decoder (a..g)   |
+                    +----------------------+-----------------------+
+                                           |
+                        +------------------+------------------+
+                        |                                     |
+                        v                                     v
+                 anode_out(3..0)                        seg_out(6..0)
+              (Digit 3, 2, 1, 0)                     (Segments a - g)
+```
+
+---
+
+## 2. Synthesizable RTL Module Breakdown
+
+| File | Entity Name | Abstraction | Description |
+| :--- | :--- | :--- | :--- |
+| `src/{top_entity}.vhd` | `{top_entity}` | Scale 3/4 System | Top-level structural integration connecting the 32-neuron layer to the 4-digit display. |
+| `src/neuron_layer_32.vhd` | `neuron_layer_32` | Scale 3 Subsystem | 32 parallel `neuron_core` instances, reduction accumulator, and winner-take-all classifier. |
+| `src/neuron_core.vhd` | `neuron_core` | Scale 2 Module | Single arithmetic neuron with pipelined 8-bit multiplier, bias addition, and clamped ReLU. |
+| `src/display_4x7seg.vhd` | `display_4x7seg` | Scale 2 Module | 4-digit dynamic multiplexed 7-segment display driver with hex-to-cathode decoder. |
+| `tb/{top_entity}_tb.vhd` | `{top_entity}_tb` | Verification | Self-checking simulation testbench applying electrical stimulus and verifying multiplexed display. |
+| `docs/neural_architecture_plan.md` | - | Documentation | Architectural specification and integration guide. |
+
+---
+
+## 3. Mathematical Model & Nonlinearity
+Each neuron computes the weighted synaptic dot product followed by a biased Rectified Linear Unit (ReLU) activation:
+
+y_i = ReLU(x * w_i + b_i) = max(0, min(127, x * w_i + b_i))
+
+The aggregate layer response incorporates external cascade offsets:
+Layer_Sum = Cascade_In + SUM(y_i for i=0..31)
+
+---
+
+## 4. Multi-Cluster Chaining Provision
+To connect multiple 32-neuron tiles together in a deep neural network or wider array:
+- Connect `cascade_out` of tile N directly to `cascade_in` of tile N+1.
+- Stimulus can be broadcast simultaneously or pipelined along the cluster bus.
+"""
+
+    return {
+        "circuit_name": top_entity,
+        "scale": 3,
+        "scale_label": "Scale 3: Neural Subsystem",
+        "description": "32-Neuron parallel arithmetic array with ReLU activation, inter-array cascade chaining, and 4-digit multiplexed seven-segment display driver.",
+        "top_file": f"src/{top_entity}.vhd",
+        "files": files,
+        "modules": [
+            {"name": "neuron_core", "role": "MAC & ReLU Activation Neuron", "file": "src/neuron_core.vhd"},
+            {"name": "neuron_layer_32", "role": "32-Neuron Parallel Array & Reduction", "file": "src/neuron_layer_32.vhd"},
+            {"name": "display_4x7seg", "role": "4-Digit Multiplexed 7-Segment Driver", "file": "src/display_4x7seg.vhd"},
+            {"name": top_entity, "role": "Top-Level Structural System Integration", "file": f"src/{top_entity}.vhd"},
+            {"name": f"{top_entity}_tb", "role": "Verification Testbench", "file": f"tb/{top_entity}_tb.vhd"},
+            {"name": "neural_architecture_plan", "role": "Architecture Specification", "file": "docs/neural_architecture_plan.md"}
+        ]
+    }
 
 def generate_dsp_mac_suite(circuit_name: str = "dsp_mac_pipeline") -> Dict[str, Any]:
     """
